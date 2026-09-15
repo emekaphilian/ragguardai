@@ -93,3 +93,108 @@ def test_tenant_cannot_retrieve_another_tenants_document():
         source["document_id"] != "tenant-a-doc"
         for source in tenant_b_result["sources"]
     )
+
+
+def test_api_query_isolates_tenant_documents(monkeypatch):
+    settings = Settings(
+        tenant_policies=(
+            TenantPolicy(
+                tenant_id="tenant-a",
+                application_id="app-a",
+                environment="test",
+                vector_namespace="namespace-a",
+            ),
+            TenantPolicy(
+                tenant_id="tenant-b",
+                application_id="app-b",
+                environment="test",
+                vector_namespace="namespace-b",
+            ),
+        )
+    )
+
+    monkeypatch.setattr(
+        "ragguard.api.middleware.load_settings",
+        lambda: settings,
+    )
+
+    original_documents = workspace.documents
+    original_store = workspace.store
+    original_runs = workspace.runs
+    original_failures = workspace.failures
+    original_repairs = workspace.repairs
+
+    try:
+        service = TenantService(settings)
+        tenant_a = service.resolve("tenant-a")
+        tenant_b = service.resolve("tenant-b")
+
+        workspace.documents = {}
+        workspace.runs = []
+        workspace.failures = []
+        workspace.repairs = []
+
+        workspace.ingest_documents(
+            [
+                Document(
+                    document_id="tenant-a-api-doc",
+                    text="Tenant A confidential refund policy.",
+                    metadata={"source": "tenant-a-api-policy"},
+                )
+            ],
+            context=tenant_a,
+        )
+
+        workspace.ingest_documents(
+            [
+                Document(
+                    document_id="tenant-b-api-doc",
+                    text="Tenant B confidential payment policy.",
+                    metadata={"source": "tenant-b-api-policy"},
+                )
+            ],
+            context=tenant_b,
+        )
+
+        tenant_a_response = client.post(
+            "/api/v1/query",
+            headers={"X-RAGGuard-Tenant": "tenant-a"},
+            json={
+                "query": "Tenant A confidential refund policy",
+                "top_k": 5,
+                "method": "vector",
+            },
+        )
+
+        tenant_b_response = client.post(
+            "/api/v1/query",
+            headers={"X-RAGGuard-Tenant": "tenant-b"},
+            json={
+                "query": "Tenant A confidential refund policy",
+                "top_k": 5,
+                "method": "vector",
+            },
+        )
+
+        assert tenant_a_response.status_code == 200
+        assert tenant_b_response.status_code == 200
+
+        tenant_a_sources = tenant_a_response.json()["sources"]
+        tenant_b_sources = tenant_b_response.json()["sources"]
+
+        assert any(
+            source["document_id"] == "tenant-a-api-doc"
+            for source in tenant_a_sources
+        )
+
+        assert all(
+            source["document_id"] != "tenant-a-api-doc"
+            for source in tenant_b_sources
+        )
+
+    finally:
+        workspace.documents = original_documents
+        workspace.store = original_store
+        workspace.runs = original_runs
+        workspace.failures = original_failures
+        workspace.repairs = original_repairs
