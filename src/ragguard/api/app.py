@@ -1,16 +1,25 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from .exceptions import ragguard_exception_handler
 from .routes.health import router as health_router
 from .routes.retrieval import router as retrieval_router
 from .routes.evaluation import router as evaluation_router
 from .routes.repairs import router as repairs_router
 from .routes.dashboard import router as dashboard_router
 from .routes.narrator import router as narrator_router
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi import Request
-from fastapi.responses import JSONResponse
+
 from ragguard.api.middleware import resolve_request_context
+from ragguard.common.exceptions import RAGGuardError
 
 app = FastAPI(title="RAGGuard", version="0.2.0")
+
+app.add_exception_handler(
+    RAGGuardError,
+    ragguard_exception_handler,
+)
+
 app.add_middleware(CORSMiddleware, allow_origins=['http://localhost:5173'], allow_credentials=True, allow_methods=['*'], allow_headers=['*'])
 
 @app.middleware("http")
