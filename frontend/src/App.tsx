@@ -1,0 +1,2 @@
+import {useState} from 'react'; import Layout from './components/Layout'; import Overview from './pages/Overview'; import QueryLab from './pages/QueryLab'; import Generic from './pages/Generic';
+export default function App(){const [page,setPage]=useState('overview');const content=page==='overview'?<Overview/>:page==='query'?<QueryLab/>:<Generic type={page}/>;return <Layout page={page} setPage={setPage}>{content}</Layout>}

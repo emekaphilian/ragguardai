@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.env
+dist/
+build/
+*.egg-info/
+data/processed/*
+data/synthetic/runtime/*
+!.gitkeep
+
+# Frontend dependencies
+frontend/node_modules/
+frontend/dist/

@@ -1,0 +1,1 @@
+Security incidents must be reported within 24 hours. Incident reports should include the affected system and timestamp.

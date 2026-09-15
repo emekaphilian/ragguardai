@@ -1,0 +1,2 @@
+{"scenario":"low_recall","expected_failure":"LOW_CONTEXT_RECALL"}
+{"scenario":"low_precision","expected_failure":"LOW_CONTEXT_PRECISION"}

@@ -1,0 +1,11 @@
+{
+  "widgets": [
+    {"type": "metric", "properties": {"title": "RAG Failure Rate"}},
+    {"type": "metric", "properties": {"title": "Average Retrieval Recall"}},
+    {"type": "metric", "properties": {"title": "Average Faithfulness"}},
+    {"type": "metric", "properties": {"title": "Repair Success Rate"}},
+    {"type": "metric", "properties": {"title": "Mean Repair Time"}},
+    {"type": "metric", "properties": {"title": "Rollback Rate"}},
+    {"type": "metric", "properties": {"title": "Human Escalation Rate"}}
+  ]
+}

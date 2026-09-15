@@ -1,0 +1,17 @@
+environment: development
+top_k: 5
+thresholds:
+  context_precision: 0.70
+  context_recall: 0.70
+  faithfulness: 0.70
+  answer_relevancy: 0.70
+tenants:
+  development:
+    application_id: ragguard
+    vector_namespace: development
+    policy:
+      version: v1
+    llm:
+      enabled: false
+      provider: openai
+      model: gpt-4o-mini

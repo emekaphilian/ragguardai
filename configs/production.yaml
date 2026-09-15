@@ -1,0 +1,7 @@
+environment: production
+top_k: 8
+thresholds:
+  context_precision: 0.80
+  context_recall: 0.80
+  faithfulness: 0.85
+  answer_relevancy: 0.80
