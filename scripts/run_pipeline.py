@@ -32,6 +32,13 @@ def main():
             text="Priority support is available to enterprise customers. "
                  "Standard support responds within two business days."
         ),
+        # Intentional fixture: duplicate context gives the offline demo a
+        # deterministic, observable DEDUPLICATE repair to validate.
+        Document(
+            document_id="refund-copy",
+            text="Refunds are available within 30 days of purchase. "
+                 "Approved refunds are returned to the original payment method."
+        ),
     ]
 
     store = VectorStore()
@@ -40,7 +47,9 @@ def main():
 
     query = "How long do I have to request a refund?"
     answer = "Refunds are available within 30 days of purchase."
-    relevant = {c.chunk_id for c in chunks if "30 days" in c.text}
+    # The copy represents duplicate evidence, not an additional ground-truth
+    # fact; only the canonical refund chunk is labeled relevant.
+    relevant = {c.chunk_id for c in chunks if c.document_id == "refund" and "30 days" in c.text}
 
     retrieval = store.search(query, top_k=settings.top_k)
     evaluator = Evaluator()

@@ -53,6 +53,10 @@ class RepairResult(BaseModel):
     after_metrics: EvaluationResult
     improvement: float
     status: str
+    before_retrieval: RetrievalResult | None = None
+    after_retrieval: RetrievalResult | None = None
+    before_retrieval_stats: dict[str, int] = Field(default_factory=dict)
+    after_retrieval_stats: dict[str, int] = Field(default_factory=dict)
     rollback_available: bool = True
 
 class ValidationResult(BaseModel):

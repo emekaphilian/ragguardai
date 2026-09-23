@@ -1,5 +1,7 @@
 from pydantic import BaseModel, Field
 
+from ragguard.common.schemas import EvaluationResult
+
 class QueryRequest(BaseModel):
     query: str = Field(min_length=1)
     top_k: int = 5
@@ -24,8 +26,10 @@ class EvaluateRequest(BaseModel):
 
 class DetectRequest(BaseModel):
     query: str
-    metrics: dict
+    metrics: EvaluationResult
 
 class RepairRequest(BaseModel):
-    repair_type: str
     query: str
+    answer: str = Field(min_length=1)
+    relevant_chunk_ids: list[str] = Field(min_length=1)
+    top_k: int = Field(default=5, ge=1)
