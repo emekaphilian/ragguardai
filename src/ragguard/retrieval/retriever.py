@@ -13,8 +13,6 @@ def retrieve(store, query, method="vector", top_k=5, context=None):
     namespace = context.vector_namespace if context is not None else None
 
     try:
-        # Hybrid and keyword adapters currently operate on an in-memory list.
-        # Give them only the authenticated tenant's chunks.
         if namespace is not None and method in {"hybrid", "keyword"}:
             original_store = store
 
@@ -44,11 +42,10 @@ def retrieve(store, query, method="vector", top_k=5, context=None):
                 f"Unsupported retrieval method: {method}"
             )
 
-        return (
-            store.search(query, top_k, namespace=namespace)
-            if namespace is not None
-            else vector_retrieve(store, query, top_k)
-        )
+        if namespace is not None:
+            return store.search(query, top_k, namespace=namespace)
+
+        return vector_retrieve(store, query, top_k)
 
     except RetrievalError:
         raise

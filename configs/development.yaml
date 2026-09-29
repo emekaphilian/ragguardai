@@ -1,5 +1,6 @@
 environment: development
 top_k: 5
+max_repair_attempts: 3
 thresholds:
   context_precision: 0.70
   context_recall: 0.70
@@ -7,7 +8,7 @@ thresholds:
   answer_relevancy: 0.70
 tenants:
   development:
-    application_id: ragguard
+    application_id: trustassist
     vector_namespace: development
     policy:
       version: v1

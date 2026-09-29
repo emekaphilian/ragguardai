@@ -9,6 +9,10 @@ from .routes.evaluation import router as evaluation_router
 from .routes.repairs import router as repairs_router
 from .routes.dashboard import router as dashboard_router
 from .routes.narrator import router as narrator_router
+from .routes.observations import router as observations_router
+from .routes.observations import recovery_repository
+from .routes.replay import router as replay_router
+from .recovery_routes import build_recovery_router
 
 from ragguard.api.middleware import resolve_request_context
 from ragguard.common.exceptions import RAGGuardError
@@ -20,19 +24,44 @@ app.add_exception_handler(
     ragguard_exception_handler,
 )
 
-app.add_middleware(CORSMiddleware, allow_origins=['http://localhost:5173'], allow_credentials=True, allow_methods=['*'], allow_headers=['*'])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.middleware("http")
 async def attach_tenant_context(request: Request, call_next):
+    # External telemetry identifies its source in the observation contract;
+    # it is independent of RAGGuard's internal workspace tenant context.
+    if request.url.path == "/api/v1/observations":
+        return await call_next(request)
+
     try:
         request.state.tenant_context = resolve_request_context(request)
     except PermissionError:
-        return JSONResponse(status_code=403, content={"detail": "Unknown tenant"})
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Unknown tenant"},
+        )
+
     return await call_next(request)
+
+
 app.include_router(health_router, prefix="/api/v1")
 app.include_router(retrieval_router, prefix="/api/v1")
 app.include_router(evaluation_router, prefix="/api/v1")
 app.include_router(repairs_router, prefix="/api/v1")
-
 app.include_router(dashboard_router, prefix="/api/v1")
 app.include_router(narrator_router, prefix="/api/v1")
+app.include_router(observations_router, prefix="/api/v1")
+app.include_router(build_recovery_router(recovery_repository))
+app.include_router(replay_router)

@@ -11,8 +11,32 @@ from ragguard.detection.failure_detector import FailureDetector
 from ragguard.diagnosis.diagnostic_agent import diagnose
 from ragguard.evaluation.evaluator import Evaluator
 from ragguard.repair.repair_engine import RepairEngine
+from ragguard.common.enums import RepairType
+from ragguard.repair.repair_policy import EXECUTABLE_REPAIRS
 
 router = APIRouter()
+
+
+@router.get("/repair-capabilities")
+def repair_capabilities(context: TenantContext = Depends(tenant_context)):
+    del context  # The route uses the workspace tenant boundary, not source metadata.
+    descriptions = {
+        RepairType.DEDUPLICATE: "Remove duplicate chunks from a retrieval candidate.",
+        RepairType.HYBRID_RETRIEVAL: "Combine lexical and vector retrieval candidates.",
+        RepairType.RERANK: "Reorder retrieved chunks using query relevance.",
+    }
+    return [
+        {
+            "strategy": strategy.value,
+            "implemented": strategy in EXECUTABLE_REPAIRS,
+            "description": descriptions.get(
+                strategy,
+                "No executable repair strategy is registered for this operation.",
+            ),
+        }
+        for strategy in RepairType
+        if strategy != RepairType.HUMAN_ESCALATION
+    ]
 
 
 @router.post("/detect")
@@ -31,6 +55,13 @@ def detect(request: DetectRequest, context: TenantContext = Depends(tenant_conte
 @router.post("/repair")
 def repair(request: RepairRequest, context: TenantContext = Depends(tenant_context)):
     """Run the verified sequential repair path against labeled evidence."""
+    settings = load_settings()
+    max_repair_attempts = settings.max_repair_attempts
+    if request.max_repair_attempts is not None:
+        max_repair_attempts = min(
+            request.max_repair_attempts,
+            settings.max_repair_attempts,
+        )
     retrieval = workspace.store.search(
         request.query, top_k=request.top_k, namespace=context.vector_namespace
     )
@@ -46,25 +77,35 @@ def repair(request: RepairRequest, context: TenantContext = Depends(tenant_conte
         evaluation_result=before_metrics,
     )
     state = run_sequential(
-        state, FailureDetector(load_settings().thresholds), diagnose,
+        state, FailureDetector(settings.thresholds), diagnose,
         RepairEngine(), workspace.store, evaluator, relevant_ids, request.answer,
+        max_repair_attempts=max_repair_attempts,
     )
 
     result = state.repair_result
-    after_metrics = result.after_metrics if result else before_metrics
+    after_metrics = state.evaluation_result or before_metrics
     validation = state.validation_result
+    net_improvement = round(
+        after_metrics.overall_score - before_metrics.overall_score,
+        10,
+    )
     repair = {
         "id": f"repair-{len(workspace.repairs) + 1}",
         "query": request.query,
         "status": {
             "repaired": "improved", "rolled_back": "rolled_back",
-            "escalate": "unchanged", "healthy": "healthy",
+            "promoted": "improved", "escalated": "escalated",
+            "escalate": "escalated", "healthy": "healthy",
         }[state.status],
         "repair_type": result.repair_type.value if result else None,
         "before_metrics": before_metrics.model_dump(),
         "after_metrics": after_metrics.model_dump(),
-        "improvement": result.improvement if result else 0.0,
-        "validated": validation.valid if validation else True,
+        "improvement": net_improvement,
+        "last_attempt_improvement": result.improvement if result else None,
+        "validated": validation.valid if validation else None,
+        "attempted_repairs": [repair.value for repair in state.attempted_repairs],
+        "max_repair_attempts": max_repair_attempts,
+        "completed_nodes": state.completed_nodes,
         "failure_type": state.failure_event.failure_type.value if state.failure_event else None,
         "rollback": state.status == "rolled_back",
         "retrieval": {

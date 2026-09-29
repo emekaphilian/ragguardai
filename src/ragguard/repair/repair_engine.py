@@ -2,11 +2,17 @@ from uuid import uuid4
 from types import SimpleNamespace
 
 from ragguard.common.enums import RepairType
-from ragguard.common.schemas import RepairResult, ValidationResult
+from ragguard.common.schemas import RepairResult
+from ragguard.validation.validator import validate_repair
 
 from .deduplicate import deduplicate, retrieval_stats
 from .hybrid_retrieval import run_hybrid
 from .reranking import rerank
+from .repair_policy import EXECUTABLE_REPAIRS
+
+
+class UnsupportedRepairError(ValueError):
+    """Raised when policy requests a repair without an implemented strategy."""
 
 
 class RepairEngine:
@@ -19,6 +25,11 @@ class RepairEngine:
         The caller owns promotion or rollback by choosing which returned retrieval
         state becomes active.  This keeps a rejected experiment reversible.
         """
+        if repair_type not in EXECUTABLE_REPAIRS:
+            raise UnsupportedRepairError(
+                f"Repair strategy {repair_type} has no executable implementation."
+            )
+
         before_retrieval = before_retrieval or store.search(
             query, top_k=top_k, namespace=namespace
         )
@@ -65,13 +76,4 @@ class RepairEngine:
         )
 
     def validate(self, result):
-        return ValidationResult(
-            valid=True,
-            improved=result.improvement > 0,
-            score_delta=result.improvement,
-            message=(
-                "Repair improved evaluation score."
-                if result.improvement > 0
-                else "Repair did not improve the score."
-            ),
-        )
+        return validate_repair(result)

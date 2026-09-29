@@ -1,0 +1,78 @@
+from fastapi import APIRouter, Header, HTTPException
+
+from ragguard.auth.service_auth import (
+    ServiceAuthenticationError,
+    authenticate_service,
+)
+from ragguard.api.observation_recovery import build_recovery_response
+from ragguard.api.recovery_service import ObservationRecoveryService
+from ragguard.api.schemas import ObservationRecoveryResponse
+from ragguard.config import load_settings
+from ragguard.diagnosis.diagnostic_agent import diagnose
+from ragguard.detection.live_detector import LiveFailureDetector
+from ragguard.evaluation.live import RAGObservation
+from ragguard.evaluation.live_evaluator import LiveEvaluator
+from ragguard.persistence.repositories import create_recovery_audit_repository
+from ragguard.events.bus import InMemoryRecoveryEventBus
+
+router = APIRouter()
+
+evaluator = LiveEvaluator()
+detector = LiveFailureDetector()
+recovery_repository = create_recovery_audit_repository()
+recovery_event_bus = InMemoryRecoveryEventBus(
+    event_retention_days=load_settings().event_retention_days,
+)
+recovery_service = ObservationRecoveryService(
+    detector=detector,
+    diagnosis_fn=diagnose,
+    recovery_repository=recovery_repository,
+    event_bus=recovery_event_bus,
+)
+
+
+@router.post("/observations", response_model=ObservationRecoveryResponse)
+def observe(
+    observation: RAGObservation,
+    authorization: str | None = Header(default=None),
+):
+    """Evaluate a generic RAG observation supplied by any application adapter."""
+    try:
+        authenticated_service = authenticate_service(
+            authorization,
+            load_settings(),
+        )
+    except ServiceAuthenticationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    if observation.source.application_id != authenticated_service.application_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Observation source does not match the authenticated service.",
+        )
+
+    evaluation = evaluator.evaluate(observation)
+    failure = detector.detect(observation, evaluation)
+
+    if failure is None:
+        return ObservationRecoveryResponse(
+            status="healthy",
+            evaluation=evaluation,
+            failure=None,
+            recovery=None,
+        )
+
+    state = recovery_service.recover(
+        observation=observation,
+        context=authenticated_service.tenant_context,
+        evaluation=evaluation,
+        failure_event=failure,
+    )
+    recovery = build_recovery_response(state)
+
+    return ObservationRecoveryResponse(
+        status=recovery["status"],
+        evaluation=evaluation,
+        failure=failure,
+        recovery=recovery,
+    )
