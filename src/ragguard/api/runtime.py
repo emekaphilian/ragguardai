@@ -36,7 +36,6 @@ from ragguard.evaluation.live_evaluator import LiveEvaluator
 
 observation_repository = create_observation_repository()
 application_repository = create_application_repository()
-application_repository.bootstrap(load_settings().tenant_policies)
 
 
 class Workspace:
