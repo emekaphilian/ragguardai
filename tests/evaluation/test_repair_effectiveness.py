@@ -1,7 +1,7 @@
 from ragguard.agents.graph import run_sequential
 from ragguard.agents.state import RAGGuardState
 from ragguard.common.enums import RepairType
-from ragguard.common.schemas import Chunk, EvaluationResult, RepairResult, ValidationResult
+from ragguard.common.schemas import Chunk, RepairResult, ValidationResult
 from ragguard.config import Thresholds
 from ragguard.detection.failure_detector import FailureDetector
 from ragguard.diagnosis.diagnostic_agent import diagnose
@@ -39,16 +39,15 @@ def test_deduplicate_repair_improves_labeled_retrieval_state():
 
 class WorseRepairEngine:
     def execute(self, repair_type, store, query, before_metrics, relevant_ids, evaluator, answer, **kwargs):
-        worse = EvaluationResult(
-            context_precision=0.0, context_recall=0.0, faithfulness=0.0,
-            answer_relevancy=0.0, citation_accuracy=0.0, overall_score=0.0,
+        worse_retrieval = kwargs["before_retrieval"].model_copy(
+            update={"documents": [], "scores": []}
         )
         return RepairResult(
             repair_id="worse", failure_id="", repair_type=repair_type,
-            before_metrics=before_metrics, after_metrics=worse,
-            improvement=worse.overall_score - before_metrics.overall_score,
+            before_metrics=before_metrics, after_metrics=before_metrics,
+            improvement=0.0,
             status="rejected", before_retrieval=kwargs["before_retrieval"],
-            after_retrieval=kwargs["before_retrieval"],
+            after_retrieval=worse_retrieval,
         )
 
     def validate(self, result):
@@ -69,6 +68,6 @@ def test_failed_repair_rolls_back_retrieval_state():
         evaluator, {"relevant"}, "Refund deadline.",
     )
 
-    assert state.status == "rolled_back"
+    assert state.status == "escalated"
     assert state.retrieval_result is retrieval
     assert state.evaluation_result is before

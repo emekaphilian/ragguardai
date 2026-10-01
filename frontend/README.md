@@ -13,4 +13,10 @@ npm run dev
 ```
 
 Open http://localhost:5173.
-Set `VITE_API_BASE_URL` when the API is not on localhost:8000.
+Set `VITE_API_BASE_URL` when the API is not on localhost:8000. Set
+`VITE_RAGGUARD_TENANT_ID` to the same RAGGuard internal tenant configured by
+`RAGGUARD_SERVICE_TENANT` on the API. This is a tenant scope identifier, not an
+authentication secret. The Query Runs page polls the tenant-scoped `/runs`
+endpoint every four seconds. For a deployed frontend, set both variables in its
+build environment and rebuild the static site; Vite embeds these values at build
+time.

@@ -3,7 +3,8 @@ from fastapi import APIRouter, Depends
 from ragguard.agents.graph import run_sequential
 from ragguard.agents.state import RAGGuardState
 from ragguard.api.middleware import tenant_context
-from ragguard.api.runtime import workspace
+from ragguard.api.observation_views import observation_failure
+from ragguard.api.runtime import observation_repository, workspace
 from ragguard.api.schemas import DetectRequest, RepairRequest
 from ragguard.auth.tenant_context import TenantContext
 from ragguard.config import load_settings
@@ -125,7 +126,24 @@ def metrics(context: TenantContext = Depends(tenant_context)):
 
 @router.get("/failures")
 def failures(context: TenantContext = Depends(tenant_context)):
-    return [failure for failure in workspace.failures if failure["tenant_id"] == context.tenant_id]
+    local_failures = [
+        failure for failure in workspace.failures
+        if failure["tenant_id"] == context.tenant_id
+    ]
+    observed_failures = [
+        observation_failure(record)
+        for record in observation_repository.list(
+            ragguard_tenant_id=context.tenant_id,
+            application_id=context.application_id,
+            failure_detected=True,
+            limit=250,
+        )
+    ]
+    return sorted(
+        [*local_failures, *observed_failures],
+        key=lambda item: item["created_at"],
+        reverse=True,
+    )
 
 
 @router.get("/repairs/{repair_id}")

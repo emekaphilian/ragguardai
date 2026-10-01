@@ -8,6 +8,10 @@ from typing import Any, Callable
 ConnectionFactory = Callable[[], AbstractContextManager[Any]]
 
 
+def selected_persistence_backend(backend: str | None = None) -> str:
+    return (backend or os.getenv("RAGGUARD_AUDIT_BACKEND", "memory")).strip().lower()
+
+
 def connect(database_url: str | None = None):
     """Open a PostgreSQL connection using the optional psycopg driver."""
     dsn = database_url or os.getenv("RAGGUARD_DATABASE_URL")

@@ -52,6 +52,9 @@ def test_repair_route_uses_repair_engine_validation():
     assert "improvement" in body
     assert "validated" in body
     assert "retrieval" in body
+    assert body["completed_nodes"][:2] == ["evaluate", "detect"]
+    assert "attempted_repairs" in body
+    assert "max_repair_attempts" in body
 
 
 def test_detect_route_uses_failure_detector():
@@ -73,3 +76,14 @@ def test_detect_route_uses_failure_detector():
     assert response.status_code == 200
     assert response.json()["failure_detected"] is True
     assert response.json()["failure_type"] == "LOW_CONTEXT_RECALL"
+
+
+def test_repair_capabilities_report_only_implemented_strategies():
+    response = client.get("/api/v1/repair-capabilities")
+
+    assert response.status_code == 200
+    capabilities = {item["strategy"]: item for item in response.json()}
+    assert capabilities["DEDUPLICATE"]["implemented"] is True
+    assert capabilities["HYBRID_RETRIEVAL"]["implemented"] is True
+    assert capabilities["RERANK"]["implemented"] is True
+    assert capabilities["RECHUNK"]["implemented"] is False

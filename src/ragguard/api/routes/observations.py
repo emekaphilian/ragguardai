@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from fastapi import APIRouter, Header, HTTPException
 
 from ragguard.auth.service_auth import (
@@ -12,7 +14,9 @@ from ragguard.diagnosis.diagnostic_agent import diagnose
 from ragguard.detection.live_detector import LiveFailureDetector
 from ragguard.evaluation.live import RAGObservation
 from ragguard.evaluation.live_evaluator import LiveEvaluator
+from ragguard.observability.observation_activity import ObservationRecord
 from ragguard.persistence.repositories import create_recovery_audit_repository
+from ragguard.api.runtime import observation_repository
 from ragguard.events.bus import InMemoryRecoveryEventBus
 
 router = APIRouter()
@@ -53,6 +57,20 @@ def observe(
 
     evaluation = evaluator.evaluate(observation)
     failure = detector.detect(observation, evaluation)
+    observation_record = ObservationRecord.create(
+        ragguard_tenant_id=authenticated_service.tenant_context.tenant_id,
+        application_id=authenticated_service.application_id,
+        status="healthy" if failure is None else "failure",
+        query=observation.query,
+        evaluation=evaluation.model_dump(mode="json"),
+        observation=observation.model_dump(
+            mode="json",
+            exclude={"embedding_fallback", "embedding_failure"},
+        ),
+        failure=failure.model_dump(mode="json") if failure is not None else None,
+        recovery=None,
+    )
+    observation_repository.save(observation_record)
 
     if failure is None:
         return ObservationRecoveryResponse(
@@ -70,9 +88,19 @@ def observe(
     )
     recovery = build_recovery_response(state)
 
-    return ObservationRecoveryResponse(
+    response = ObservationRecoveryResponse(
         status=recovery["status"],
         evaluation=evaluation,
         failure=failure,
         recovery=recovery,
     )
+    observation_repository.save(replace(
+        observation_record,
+        status=response.status,
+        recovery=(
+            response.recovery.model_dump(mode="json")
+            if response.recovery is not None
+            else None
+        ),
+    ))
+    return response

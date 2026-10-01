@@ -39,6 +39,10 @@ class RecoveryAuditRepository(Protocol):
     def delete_expired(self, before: datetime) -> int:
         ...
 
+    def clear(self) -> int:
+        """Delete all recovery audits and return the number removed."""
+        ...
+
 
 class InMemoryRecoveryAuditRepository(RecoveryAuditRepository):
     """Thread-safe in-process repository for local use and tests."""
@@ -105,6 +109,12 @@ class InMemoryRecoveryAuditRepository(RecoveryAuditRepository):
             for recovery_id in expired_ids:
                 del self._records[recovery_id]
         return len(expired_ids)
+
+    def clear(self) -> int:
+        with self._lock:
+            count = len(self._records)
+            self._records.clear()
+        return count
 
     @staticmethod
     def _filter(

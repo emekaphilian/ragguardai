@@ -13,7 +13,7 @@ from ragguard.observability.recovery_audit import (
 from ragguard.observability.recovery_repository import RecoveryAuditRepository
 from ragguard.observability.recovery_repository import InMemoryRecoveryAuditRepository
 
-from .database import connect
+from .database import connect, selected_persistence_backend
 from .models import RecoveryAuditRow
 
 
@@ -142,6 +142,14 @@ class PostgreSQLRecoveryAuditRepository(RecoveryAuditRepository):
                 )
                 return len(cursor.fetchall())
 
+    def clear(self) -> int:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "DELETE FROM recovery_audits RETURNING recovery_id"
+                )
+                return len(cursor.fetchall())
+
     @staticmethod
     def _where_clause(
         ragguard_tenant_id: str | None,
@@ -172,8 +180,7 @@ def create_recovery_audit_repository(
     backend: str | None = None,
     database_url: str | None = None,
 ) -> RecoveryAuditRepository:
-    selected_backend = (backend or os.getenv("RAGGUARD_AUDIT_BACKEND", "memory"))
-    selected_backend = selected_backend.strip().lower()
+    selected_backend = selected_persistence_backend(backend)
 
     if selected_backend in {"memory", "inmemory", "in-memory"}:
         return InMemoryRecoveryAuditRepository()

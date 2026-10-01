@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -12,12 +14,22 @@ from .routes.narrator import router as narrator_router
 from .routes.observations import router as observations_router
 from .routes.observations import recovery_repository
 from .routes.replay import router as replay_router
+from .routes.admin import router as admin_router
 from .recovery_routes import build_recovery_router
 
 from ragguard.api.middleware import resolve_request_context
 from ragguard.common.exceptions import RAGGuardError
+from ragguard.persistence.database import apply_migrations, selected_persistence_backend
 
-app = FastAPI(title="RAGGuard", version="0.2.0")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    if selected_persistence_backend() in {"postgres", "postgresql"}:
+        apply_migrations()
+    yield
+
+
+app = FastAPI(title="RAGGuard", version="0.2.0", lifespan=lifespan)
 
 app.add_exception_handler(
     RAGGuardError,
@@ -42,7 +54,7 @@ app.add_middleware(
 async def attach_tenant_context(request: Request, call_next):
     # External telemetry identifies its source in the observation contract;
     # it is independent of RAGGuard's internal workspace tenant context.
-    if request.url.path == "/api/v1/observations":
+    if request.url.path == "/api/v1/observations" or request.url.path.startswith("/api/v1/admin/"):
         return await call_next(request)
 
     try:
@@ -65,3 +77,4 @@ app.include_router(narrator_router, prefix="/api/v1")
 app.include_router(observations_router, prefix="/api/v1")
 app.include_router(build_recovery_router(recovery_repository))
 app.include_router(replay_router)
+app.include_router(admin_router, prefix="/api/v1")

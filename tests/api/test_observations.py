@@ -3,7 +3,10 @@ import pytest
 
 from ragguard.auth.service_auth import authenticate_service
 from ragguard.api.app import app
+from ragguard.api.routes import observations as observations_route
 from ragguard.config import ServiceAuthSettings, Settings, load_settings
+from ragguard.evaluation.live import RAGObservation
+from ragguard.observability.observation_repository import InMemoryObservationRepository
 from ragguard.tenants.models import TenantPolicy
 
 client = TestClient(app)
@@ -11,6 +14,7 @@ client = TestClient(app)
 
 @pytest.fixture(autouse=True)
 def configure_service_auth(monkeypatch):
+    observation_repository = InMemoryObservationRepository()
     settings = Settings(
         tenant_policies=(
             TenantPolicy(
@@ -30,6 +34,12 @@ def configure_service_auth(monkeypatch):
         "ragguard.api.routes.observations.load_settings",
         lambda: settings,
     )
+    monkeypatch.setattr(
+        observations_route,
+        "observation_repository",
+        observation_repository,
+    )
+    return observation_repository
 
 
 def post_observation(
@@ -55,7 +65,7 @@ def post_observation(
     )
 
 
-def test_observations_healthy_retrieval():
+def test_observations_healthy_retrieval(configure_service_auth):
     response = post_observation(
         {
             "query": "What payment methods are supported?",
@@ -78,9 +88,18 @@ def test_observations_healthy_retrieval():
     assert body["evaluation"]["top_score"] == 0.86
     assert body["evaluation"]["duplicate_ratio"] == 0.0
     assert body["failure"] is None
+    records = configure_service_auth.list()
+    assert len(records) == 1
+    assert records[0].status == "healthy"
+    assert records[0].ragguard_tenant_id == "development"
+    assert records[0].application_id == "trustassist"
+    assert records[0].query == "What payment methods are supported?"
+    assert records[0].evaluation["status"] == "HEALTHY"
+    assert records[0].failure is None
+    assert records[0].recovery is None
 
 
-def test_observations_no_retrieval():
+def test_observations_no_retrieval(configure_service_auth):
     response = post_observation(
         {
             "query": "What payment methods are supported?",
@@ -99,6 +118,48 @@ def test_observations_no_retrieval():
     assert body["failure"] is not None
     assert body["failure"]["failure_type"] == "NO_RETRIEVAL"
     assert body["failure"]["severity"] == "high"
+    records = configure_service_auth.list()
+    assert len(records) == 1
+    assert records[0].status == body["status"]
+    assert records[0].failure["failure_type"] == "NO_RETRIEVAL"
+    assert records[0].recovery["status"] == body["recovery"]["status"]
+
+
+def test_failed_observation_is_saved_if_recovery_raises(
+    configure_service_auth,
+    monkeypatch,
+):
+    def fail_recovery(**kwargs):
+        raise RuntimeError("recovery unavailable")
+
+    monkeypatch.setattr(
+        observations_route.recovery_service,
+        "recover",
+        fail_recovery,
+    )
+    observation = RAGObservation.model_validate(
+        {
+            "contract_version": "v1",
+            "source": {
+                "application_id": "trustassist",
+                "environment": "production",
+            },
+            "query": "What payment methods are supported?",
+            "retrieved_chunks": [],
+        }
+    )
+
+    with pytest.raises(RuntimeError, match="recovery unavailable"):
+        observations_route.observe(
+            observation,
+            authorization="Bearer test-service-token",
+        )
+
+    records = configure_service_auth.list()
+    assert len(records) == 1
+    assert records[0].status == "failure"
+    assert records[0].failure["failure_type"] == "NO_RETRIEVAL"
+    assert records[0].recovery is None
 
 
 def test_observations_weak_retrieval():

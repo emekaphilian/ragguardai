@@ -20,6 +20,10 @@ from ragguard.evaluation.metrics import answer_relevancy, faithfulness
 from ragguard.retrieval.retriever import retrieve
 from ragguard.retrieval.hybrid import _tokens
 from ragguard.storage.vector_store import VectorStore
+from ragguard.persistence.observation_repository import create_observation_repository
+
+
+observation_repository = create_observation_repository()
 
 
 class Workspace:
@@ -163,7 +167,7 @@ class Workspace:
             "overall_quality": None,
         }
         chunks = [chunk for chunk in self.store.chunks if context is None or chunk.metadata.get("tenant_namespace") == context.vector_namespace]
-        return {"metrics": {**metric_defaults, **latest_quality, "failure_rate": round(failures / run_count, 3) if run_count else None, "repair_success_rate": None, "total_runs": run_count}, "embedding": {"model": "local-tfidf", "dimension": len(self.store.vectorizer.vocabulary_) if self.store.matrix is not None else 0, "vectors": len(chunks), "latency_ms": runs[0]["latency_ms"] if runs else None}, "index": {"documents": len(self.document_rows(context)), "chunks": len(chunks), "last_refresh": self.started_at.isoformat()}, "recent_failures": failures_list[:10]}
+        return {"metrics": {**metric_defaults, **latest_quality, "failure_rate": round(failures / run_count, 3) if run_count else None, "repair_success_rate": None, "total_runs": run_count, "total_failures": failures}, "embedding": {"model": "local-tfidf", "dimension": len(self.store.vectorizer.vocabulary_) if self.store.matrix is not None else 0, "vectors": len(chunks), "latency_ms": runs[0]["latency_ms"] if runs else None}, "index": {"documents": len(self.document_rows(context)), "chunks": len(chunks), "last_refresh": self.started_at.isoformat()}, "recent_failures": failures_list[:10]}
 
 
 workspace = Workspace()
