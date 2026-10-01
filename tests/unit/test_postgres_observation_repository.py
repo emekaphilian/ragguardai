@@ -100,10 +100,22 @@ def test_postgres_observation_repository_round_trips_and_filters():
     assert "ragguard_tenant_id = %s" in query
     assert "application_id = %s" in query
     assert "status = %s" in query
-    assert "failure IS NULL" in query
+    assert "(failure IS NULL OR failure = 'null'::jsonb)" in query
     assert parameters == (
         "internal-a", "trustassist", "healthy", 25, 50,
     )
+
+
+def test_postgres_failure_filter_excludes_json_null():
+    where_clause, parameters = PostgreSQLObservationRepository._where_clause(
+        "internal-a",
+        "trustassist",
+        None,
+        True,
+    )
+
+    assert "failure IS NOT NULL AND failure <> 'null'::jsonb" in where_clause
+    assert parameters == ["internal-a", "trustassist"]
 
 
 def test_observation_repository_defaults_to_memory(monkeypatch):

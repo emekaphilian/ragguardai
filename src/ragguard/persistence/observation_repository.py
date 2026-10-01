@@ -166,9 +166,9 @@ class PostgreSQLObservationRepository(ObservationRepository):
                 filters.append(f"{column} = %s")
                 parameters.append(value)
         if failure_detected is True:
-            filters.append("failure IS NOT NULL")
+            filters.append("failure IS NOT NULL AND failure <> 'null'::jsonb")
         elif failure_detected is False:
-            filters.append("failure IS NULL")
+            filters.append("(failure IS NULL OR failure = 'null'::jsonb)")
         where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
         return where_clause, parameters
 
