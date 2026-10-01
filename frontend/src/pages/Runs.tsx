@@ -74,7 +74,7 @@ export default function Runs() {
     </div>
     <Section title={`Activity · ${page * pageSize + runs.length}${runs.length === pageSize ? '+' : ''}`}>
       {error && <div className="recovery-error" role="alert">{error}</div>}
-      <p className="operations-note">RAGGuard tenant: <strong>{RAGGUARD_TENANT_ID}</strong>. Updates every {refreshMs / 1000} seconds.{updatedAt ? ` Last checked ${updatedAt.toLocaleTimeString()}.` : ''}</p>
+      <p className="operations-note">RAGGuard tenant: <strong>{RAGGUARD_TENANT_ID || 'API service tenant'}</strong>. Updates every {refreshMs / 1000} seconds.{updatedAt ? ` Last checked ${updatedAt.toLocaleTimeString()}.` : ''}</p>
       {loading ? <p className="operations-note">Loading activity…</p> : runs.length ? <>
         <div className="operations-table-wrap">
           <table className="operations-table">

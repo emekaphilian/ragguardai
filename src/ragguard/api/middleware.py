@@ -18,7 +18,11 @@ def tenant_context(request: Request):
 def resolve_request_context(request: Request):
     # This is a local-development transport only. The service still performs
     # policy lookup and never treats the caller supplied id as a complete context.
-    tenant_id = request.headers.get("X-RAGGuard-Tenant", "development")
+    settings = load_settings()
+    # When no workspace tenant is explicitly selected, use the same internal
+    # tenant as service-authenticated observations. This keeps the default
+    # Control Center view aligned with the observation writer.
+    tenant_id = request.headers.get("X-RAGGuard-Tenant") or settings.service_auth.tenant_id
     user_id = request.headers.get("X-RAGGuard-User")
     roles = tuple(role.strip() for role in request.headers.get("X-RAGGuard-Roles", "").split(",") if role.strip())
-    return TenantService(load_settings()).resolve(tenant_id, user_id=user_id, roles=roles)
+    return TenantService(settings).resolve(tenant_id, user_id=user_id, roles=roles)

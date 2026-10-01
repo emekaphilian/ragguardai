@@ -4,11 +4,11 @@ export type RepairCapability = { strategy: string; implemented: boolean; descrip
 export type ApiHealth = { status: string; service: string }
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1'
-export const RAGGUARD_TENANT_ID = import.meta.env.VITE_RAGGUARD_TENANT_ID || 'development'
+export const RAGGUARD_TENANT_ID = import.meta.env.VITE_RAGGUARD_TENANT_ID?.trim() || ''
 
 function apiFetch(path: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers)
-  headers.set('X-RAGGuard-Tenant', RAGGUARD_TENANT_ID)
+  if (RAGGUARD_TENANT_ID) headers.set('X-RAGGuard-Tenant', RAGGUARD_TENANT_ID)
   return fetch(`${API_BASE}${path}`, { ...init, headers })
 }
 
