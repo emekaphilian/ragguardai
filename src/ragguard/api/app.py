@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 
 from .exceptions import ragguard_exception_handler
 from .routes.health import router as health_router
+from .routes.applications import router as applications_router
 from .routes.retrieval import router as retrieval_router
 from .routes.evaluation import router as evaluation_router
 from .routes.repairs import router as repairs_router
@@ -18,7 +19,9 @@ from .routes.admin import router as admin_router
 from .recovery_routes import build_recovery_router
 
 from ragguard.api.middleware import resolve_request_context
+from ragguard.api.runtime import application_repository
 from ragguard.common.exceptions import RAGGuardError
+from ragguard.config import load_settings
 from ragguard.persistence.database import apply_migrations, selected_persistence_backend
 
 
@@ -26,6 +29,7 @@ from ragguard.persistence.database import apply_migrations, selected_persistence
 async def lifespan(_: FastAPI):
     if selected_persistence_backend() in {"postgres", "postgresql"}:
         apply_migrations()
+    application_repository.bootstrap(load_settings().tenant_policies)
     yield
 
 
@@ -69,6 +73,7 @@ async def attach_tenant_context(request: Request, call_next):
 
 
 app.include_router(health_router, prefix="/api/v1")
+app.include_router(applications_router, prefix="/api/v1")
 app.include_router(retrieval_router, prefix="/api/v1")
 app.include_router(evaluation_router, prefix="/api/v1")
 app.include_router(repairs_router, prefix="/api/v1")
