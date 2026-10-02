@@ -14,3 +14,8 @@ data/synthetic/runtime/*
 # Frontend dependencies
 frontend/node_modules/
 frontend/dist/
+# Local environment configuration
+.env.local
+
+# Temporary backup files
+*.backup
