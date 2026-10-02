@@ -41,6 +41,7 @@ export default function RecoverySummary({ onOpenRecoveries }: { onOpenRecoveries
   }, [])
 
   const completed = records.filter((record) => record.completed_at)
+  const inProgress = records.filter((record) => !record.completed_at || record.final_status === 'running').length
   const promoted = records.filter((record) => record.final_status === 'promoted').length
   const escalated = records.filter((record) => record.final_status === 'escalated').length
   const promotionRate = completed.length
@@ -57,16 +58,18 @@ export default function RecoverySummary({ onOpenRecoveries }: { onOpenRecoveries
 
   return (
     <div className="recovery-overview">
-      <Section title="Recovery operations">
+      <Section title="Recovery audit history">
         {error ? (
           <p className="recovery-muted">Recovery audit is unavailable: {error}</p>
         ) : (
           <>
+            <p className="recovery-muted">Separate from application observation totals. These KPIs summarize the latest 20 recovery audit records returned by the API.</p>
             <div className="recovery-kpis">
-              <div><span>Recent recovery runs</span><strong>{records.length}</strong></div>
-              <div><span>Recent promotion rate</span><strong>{promotionRate === null ? '--' : `${promotionRate}%`}</strong></div>
-              <div><span>Escalated</span><strong>{escalated}</strong></div>
-              <div><span>Average duration</span><strong>{averageDuration === null ? '--' : formatDuration(averageDuration)}</strong></div>
+              <div><span>Audit records</span><strong>{records.length}</strong></div>
+              <div><span>In progress · latest 20</span><strong>{inProgress}</strong></div>
+              <div><span>Promotion rate · completed</span><strong>{promotionRate === null ? '--' : `${promotionRate}%`}</strong></div>
+              <div><span>Escalated records</span><strong>{escalated}</strong></div>
+              <div><span>Average duration · completed</span><strong>{averageDuration === null ? '--' : formatDuration(averageDuration)}</strong></div>
             </div>
             {records.length ? (
               <div className="recovery-activity">

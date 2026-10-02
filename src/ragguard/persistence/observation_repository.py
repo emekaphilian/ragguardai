@@ -95,6 +95,7 @@ class PostgreSQLObservationRepository(ObservationRepository):
         application_id: str | None = None,
         status: str | None = None,
         failure_detected: bool | None = None,
+        environment: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[ObservationRecord]:
@@ -104,6 +105,7 @@ class PostgreSQLObservationRepository(ObservationRepository):
             application_id,
             status,
             failure_detected,
+            environment,
         )
         parameters.extend((limit, offset))
         with self._connect() as connection:
@@ -125,12 +127,14 @@ class PostgreSQLObservationRepository(ObservationRepository):
         application_id: str | None = None,
         status: str | None = None,
         failure_detected: bool | None = None,
+        environment: str | None = None,
     ) -> int:
         where_clause, parameters = self._where_clause(
             ragguard_tenant_id,
             application_id,
             status,
             failure_detected,
+            environment,
         )
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -154,6 +158,7 @@ class PostgreSQLObservationRepository(ObservationRepository):
         application_id: str | None,
         status: str | None,
         failure_detected: bool | None,
+        environment: str | None = None,
     ) -> tuple[str, list[Any]]:
         filters = []
         parameters: list[Any] = []
@@ -169,6 +174,9 @@ class PostgreSQLObservationRepository(ObservationRepository):
             filters.append("failure IS NOT NULL AND failure <> 'null'::jsonb")
         elif failure_detected is False:
             filters.append("(failure IS NULL OR failure = 'null'::jsonb)")
+        if environment is not None:
+            filters.append("observation #>> '{source,environment}' = %s")
+            parameters.append(environment)
         where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
         return where_clause, parameters
 

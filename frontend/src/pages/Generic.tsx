@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import NarratorPanel from '../components/NarratorPanel'
 import { Section } from '../components/Cards'
-import { addDocument, deleteDocument, getDocuments, getFailures, getRuns, uploadDocument } from '../api/client'
+import { addDocument, deleteDocument, getDocuments, getFailures, getRecycleBin, getRuns, permanentlyDeleteDocument, restoreDocument, uploadDocument } from '../api/client'
 
 const accepted = '.txt,.md,.markdown,.rst,.csv,.tsv,.json,.yaml,.yml,.xml,.html,.htm,.pdf,.docx,.xlsx,.xlsm,.pptx,.py,.js,.ts,.tsx,.sql,.log'
 const REFRESH_MS = 4000
@@ -54,19 +54,27 @@ function FailureView({ items, loading, error }: { items: any[]; loading: boolean
 
 export default function Generic({ type }: { type: string }) {
   const [items, setItems] = useState<any[]>([])
+  const [recycled, setRecycled] = useState<any[]>([])
   const [name, setName] = useState('')
   const [text, setText] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
   const [pendingDelete, setPendingDelete] = useState<any>(null)
+  const [pendingPurge, setPendingPurge] = useState<any>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const loader = type === 'documents' ? getDocuments : type === 'failures' ? getFailures : type === 'runs' ? getRuns : null
 
   useEffect(() => {
     let active = true
-    const refresh = () => loader?.()
-      .then((result) => { if (active) { setItems(result); setError('') } })
+    const refresh = () => (type === 'documents' ? Promise.all([getDocuments(), getRecycleBin()]) : loader ? loader() : Promise.resolve([]))
+      .then((result) => {
+        if (!active) return
+        if (type === 'documents' && Array.isArray(result)) {
+          setItems(result[0]); setRecycled(result[1])
+        } else setItems(result)
+        setError('')
+      })
       .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : 'Could not load activity') })
       .finally(() => { if (active) setLoading(false) })
 
@@ -99,8 +107,26 @@ export default function Generic({ type }: { type: string }) {
   const remove = async (item: any) => {
     try {
       setError(''); setBusy(true); await deleteDocument(item.id)
-      setItems((current) => current.filter((row) => row.id !== item.id)); setPendingDelete(null)
+      await refreshDocuments()
+      setPendingDelete(null)
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not delete document') }
+    finally { setBusy(false) }
+  }
+
+  const refreshDocuments = async () => {
+    const [activeDocuments, recycledDocuments] = await Promise.all([getDocuments(), getRecycleBin()])
+    setItems(activeDocuments); setRecycled(recycledDocuments)
+  }
+
+  const restore = async (item: any) => {
+    try { setError(''); setBusy(true); await restoreDocument(item.id); await refreshDocuments() }
+    catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not restore document') }
+    finally { setBusy(false) }
+  }
+
+  const purge = async (item: any) => {
+    try { setError(''); setBusy(true); await permanentlyDeleteDocument(item.id); await refreshDocuments(); setPendingPurge(null) }
+    catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not permanently delete document') }
     finally { setBusy(false) }
   }
 
@@ -119,9 +145,19 @@ export default function Generic({ type }: { type: string }) {
         {items.length ? items.map((item: any) => <article className="document-row" key={item.id}>
           <div className="document-row-head"><strong>{item.source}</strong><span className="status good">{item.status || 'indexed'}</span></div>
           <div className="document-details"><span>Source <b>{item.ingestion_method || 'integration'}</b></span><span>Chunks <b>{item.chunks}</b></span><span>Characters <b>{item.characters}</b></span><span>Embedding <b>{item.embedding_model || 'local-tfidf'}</b></span><span>Dimensions <b>{item.embedding_dimensions ?? 'Unavailable'}</b></span><span>Vectors <b>{item.embedding_vectors ?? item.chunks}</b></span></div>
-          <small>{item.id}</small><div className="document-actions">{pendingDelete?.id === item.id ? <div className="delete-warning" role="alert"><strong>Delete this indexed document permanently?</strong><span>This removes the document and all its chunks and vectors from the index. This cannot be undone.</span><button className="danger" onClick={() => void remove(item)} disabled={busy}>Delete permanently</button><button className="ghost" onClick={() => setPendingDelete(null)} disabled={busy}>Cancel</button></div> : <button className="danger-outline" onClick={() => setPendingDelete(item)} disabled={busy}>Delete</button>}</div>
+          <small>{item.id}</small><div className="document-actions">{pendingDelete?.id === item.id ? <div className="delete-warning" role="alert"><strong>Move this document to the recycle bin?</strong><span>It will be removed from retrieval now. You can restore it or permanently delete it from the recycle bin.</span><button className="danger" onClick={() => void remove(item)} disabled={busy}>Move to recycle bin</button><button className="ghost" onClick={() => setPendingDelete(null)} disabled={busy}>Cancel</button></div> : <button className="danger-outline" onClick={() => setPendingDelete(item)} disabled={busy}>Delete</button>}</div>
         </article>) : <p className="answer">{loading ? 'Loading documents…' : 'No documents indexed yet.'}</p>}
       </div>}
+      {type === 'documents' && <Section title={`Recycle bin · ${recycled.length}`}>
+        <p className="answer">Recycled documents are excluded from search. Restore returns them to the index; permanent deletion removes the saved document and its archived source file.</p>
+        {recycled.length ? <div className="run-list">{recycled.map((item) => <article className="document-row" key={item.id}>
+          <div className="document-row-head"><strong>{item.source}</strong><span className="status">In recycle bin</span></div>
+          <div className="document-details"><span>Source <b>{item.ingestion_method || 'integration'}</b></span><span>Characters <b>{item.characters}</b></span></div>
+          <small>{item.id}</small><div className="document-actions">
+            {pendingPurge?.id === item.id ? <div className="delete-warning" role="alert"><strong>Permanently delete this document?</strong><span>This cannot be undone.</span><button className="danger" onClick={() => void purge(item)} disabled={busy}>Permanently delete</button><button className="ghost" onClick={() => setPendingPurge(null)} disabled={busy}>Cancel</button></div> : <><button className="ghost" onClick={() => void restore(item)} disabled={busy}>Restore</button><button className="danger-outline" onClick={() => setPendingPurge(item)} disabled={busy}>Permanently delete</button></>}
+          </div>
+        </article>)}</div> : <p className="answer">Recycle bin is empty.</p>}
+      </Section>}
     </Section>
   </div>
 }

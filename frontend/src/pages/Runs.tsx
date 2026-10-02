@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getRuns, RAGGUARD_TENANT_ID } from '../api/client'
+import { getApplications, getRuns, RAGGUARD_TENANT_ID, type RegisteredApplication } from '../api/client'
 import { Section } from '../components/Cards'
 import '../styles/recovery.css'
 
@@ -39,13 +39,27 @@ export default function Runs() {
   const [error, setError] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null)
+  const [applications, setApplications] = useState<RegisteredApplication[]>([])
+  const [applicationId, setApplicationId] = useState('')
+  const [environment, setEnvironment] = useState('')
+  const [status, setStatus] = useState('')
+  const [failureFilter, setFailureFilter] = useState('')
+
+  useEffect(() => {
+    getApplications().then(setApplications).catch(() => setApplications([]))
+  }, [])
 
   useEffect(() => {
     let active = true
     const refresh = async (initial = false) => {
       if (initial) setLoading(true)
       try {
-        const result = await getRuns(pageSize, page * pageSize)
+        const result = await getRuns(pageSize, page * pageSize, {
+          applicationId: applicationId || undefined,
+          environment: environment || undefined,
+          status: status || undefined,
+          failureDetected: failureFilter === '' ? undefined : failureFilter === 'failures',
+        })
         if (active) {
           setRuns(result)
           setError('')
@@ -60,7 +74,15 @@ export default function Runs() {
     void refresh(true)
     const timer = window.setInterval(() => { void refresh() }, refreshMs)
     return () => { active = false; window.clearInterval(timer) }
-  }, [page, refreshKey])
+  }, [page, refreshKey, applicationId, environment, status, failureFilter])
+
+  const environments = applications.filter((app) => (
+    !applicationId || app.application_id === applicationId
+  ))
+  const applicationOptions = [...new Map(applications.map((application) => [
+    application.application_id,
+    application,
+  ])).values()]
 
   return <div className="page operations-page">
     <div className="recoveries-heading">
@@ -71,6 +93,25 @@ export default function Runs() {
       <button className="ghost recovery-refresh" onClick={() => setRefreshKey((value) => value + 1)} disabled={loading}>
         Refresh
       </button>
+    </div>
+    <div className="operations-filters">
+      <label>Application<select value={applicationId} onChange={(event) => { setApplicationId(event.target.value); setPage(0) }}>
+        <option value="">All applications</option>
+        {applicationOptions.map((application) => <option key={application.application_id} value={application.application_id}>
+          {application.display_name}
+        </option>)}
+      </select></label>
+      <label>Environment<select value={environment} onChange={(event) => { setEnvironment(event.target.value); setPage(0) }}>
+        <option value="">All environments</option>
+        {[...new Set(environments.map((application) => application.environment))].map((value) => <option key={value} value={value}>{value}</option>)}
+      </select></label>
+      <label>Status<select value={status} onChange={(event) => { setStatus(event.target.value); setPage(0) }}>
+        <option value="">All statuses</option>
+        {['healthy', 'degraded', 'failure', 'promoted', 'escalated', 'grounded', 'no_match'].map((value) => <option key={value} value={value}>{value.replace(/_/g, ' ')}</option>)}
+      </select></label>
+      <label>Reliability<select value={failureFilter} onChange={(event) => { setFailureFilter(event.target.value); setPage(0) }}>
+        <option value="">All results</option><option value="failures">Failures</option><option value="healthy">No detected failure</option>
+      </select></label>
     </div>
     <Section title={`Activity · ${page * pageSize + runs.length}${runs.length === pageSize ? '+' : ''}`}>
       {error && <div className="recovery-error" role="alert">{error}</div>}

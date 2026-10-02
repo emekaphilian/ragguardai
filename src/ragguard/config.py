@@ -30,7 +30,7 @@ class LLMSettings:
 @dataclass(frozen=True)
 class ServiceAuthSettings:
     token: str | None = None
-    application: str = "trustassist"
+    application: str = "ragguard"
     tenant_id: str = "development"
 
 
@@ -78,7 +78,7 @@ def _resolve_service_auth_settings() -> ServiceAuthSettings:
         token=os.getenv("RAGGUARD_SERVICE_TOKEN"),
         application=os.getenv(
             "RAGGUARD_SERVICE_APPLICATION",
-            "trustassist",
+            "ragguard",
         ),
         tenant_id=os.getenv(
             "RAGGUARD_SERVICE_TENANT",
@@ -157,13 +157,25 @@ def load_settings(path: str | None = None) -> Settings:
             index_version=tenant_data.get("index_version", "v1"),
             llm=_resolve_llm_settings({"llm": tenant_data.get("llm", {})}),
         ))
+    service_auth = _resolve_service_auth_settings()
+    if not policies:
+        # Keep the default single-tenant workspace visible in the registry too.
+        # TenantService has historically supplied this fallback at request time,
+        # but an empty policy list meant startup had nothing to bootstrap.
+        policies.append(TenantPolicy(
+            tenant_id=service_auth.tenant_id,
+            application_id=service_auth.application,
+            environment=data.get("environment", "development"),
+            vector_namespace=service_auth.tenant_id,
+            llm=base_llm,
+        ))
     return Settings(
         environment=data.get("environment", "development"),
         top_k=int(data.get("top_k", 5)),
         thresholds=Thresholds(**data.get("thresholds", {})),
         llm=base_llm,
         tenant_policies=tuple(policies),
-        service_auth=_resolve_service_auth_settings(),
+        service_auth=service_auth,
         max_repair_attempts=_resolve_max_repair_attempts(data),
         **_resolve_audit_settings(data),
     )

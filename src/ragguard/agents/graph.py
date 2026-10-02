@@ -304,6 +304,10 @@ def build_langgraph(
                 improvement=getattr(repair, "improvement", None),
                 validation_valid=getattr(validation, "valid", None),
                 validation_improved=getattr(validation, "improved", None),
+                metadata={
+                    "before_retrieval": getattr(repair, "before_retrieval_stats", {}),
+                    "after_retrieval": getattr(repair, "after_retrieval_stats", {}),
+                },
             )
         return result(state, "validate")
 

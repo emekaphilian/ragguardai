@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { getAllRecoveries, getFailures, getRepairCapabilities } from '../api/client'
+import { getAllRecoveries, getApplications, getDashboard, getFailures, getRepairCapabilities, type RegisteredApplication } from '../api/client'
 import { Section } from '../components/Cards'
 import type { RecoveryAuditEvent, RecoveryAuditRecord } from '../types'
 import '../styles/recovery.css'
@@ -26,15 +26,16 @@ function useRecoveryRecords() {
   const [records, setRecords] = useState<RecoveryAuditRecord[]>([])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
+  const [scope, setScope] = useState<{ ragguard_tenant_id: string; application_id: string; environment: string } | null>(null)
 
   useEffect(() => {
-    getAllRecoveries()
-      .then(setRecords)
+    Promise.all([getAllRecoveries(), getDashboard()])
+      .then(([loaded, dashboard]) => { setRecords(loaded); setScope(dashboard.scope || null) })
       .catch((reason) => setError(reason instanceof Error ? reason.message : 'Could not load recovery audit'))
       .finally(() => setLoading(false))
   }, [])
 
-  return { records, error, loading }
+  return { records, error, loading, scope }
 }
 
 function FailureView({ records, onOpenRecoveries }: { records: RecoveryAuditRecord[]; onOpenRecoveries: Props['onOpenRecoveries'] }) {
@@ -98,7 +99,7 @@ function FailureView({ records, onOpenRecoveries }: { records: RecoveryAuditReco
 function EscalationView({ records, onOpenRecoveries }: { records: RecoveryAuditRecord[]; onOpenRecoveries: Props['onOpenRecoveries'] }) {
   const escalated = records.filter((record) => record.final_status === 'escalated')
   return <Section title={`Escalated recoveries · ${escalated.length}`}>
-    <p className="operations-note">These runs ended without a promoted repair. Open a record to inspect its attempts and escalation events.</p>
+    <p className="operations-note">These tenant-scoped recovery runs ended without a promoted repair. Open a record to inspect its attempts and escalation events.</p>
     {escalated.length ? <div className="operations-table-wrap"><table className="operations-table">
       <thead><tr><th>Failure</th><th>Application</th><th>Environment</th><th>Attempts</th><th>Started</th><th /></tr></thead>
       <tbody>{escalated.map((record) => <tr key={record.recovery_id}>
@@ -148,34 +149,33 @@ function StrategyView({ records }: { records: RecoveryAuditRecord[] }) {
   </Section>
 }
 
-function ApplicationView({ records, onOpenRecoveries }: { records: RecoveryAuditRecord[]; onOpenRecoveries: Props['onOpenRecoveries'] }) {
-  const groups = useMemo(() => {
-    const grouped = new Map<string, RecoveryAuditRecord[]>()
-    records.forEach((record) => {
-      const key = `${record.application_id || 'unknown'}::${record.environment || 'unknown'}`
-      grouped.set(key, [...(grouped.get(key) || []), record])
-    })
-    return [...grouped.entries()].map(([key, items]) => {
-      const [application, environment] = key.split('::')
-      const promoted = items.filter((item) => item.final_status === 'promoted').length
-      return {
-        application, environment, count: items.length, promoted,
-        escalated: items.filter((item) => item.final_status === 'escalated').length,
-        rate: items.length ? Math.round(promoted / items.length * 100) : 0,
-      }
-    }).sort((a, b) => a.application.localeCompare(b.application) || a.environment.localeCompare(b.environment))
-  }, [records])
+function ApplicationView() {
+  const [applications, setApplications] = useState<RegisteredApplication[]>([])
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(true)
 
-  return <Section title="Observed applications">
-    <p className="operations-note">These are recovery counts, not total query volume. Source tenants remain separate from RAGGuard access tenants.</p>
-    {groups.length ? <div className="operations-table-wrap"><table className="operations-table">
-      <thead><tr><th>Application</th><th>Environment</th><th>Recoveries</th><th>Promotion rate</th><th>Escalated</th><th /></tr></thead>
-      <tbody>{groups.map((group) => <tr key={`${group.application}:${group.environment}`}>
-        <td>{group.application}</td><td>{group.environment}</td><td>{group.count}</td><td>{group.rate}%</td>
-        <td>{group.escalated}</td>
-        <td><button className="ghost" onClick={() => onOpenRecoveries(group.application)}>View</button></td>
+  useEffect(() => {
+    getApplications()
+      .then(setApplications)
+      .catch((reason) => setError(reason instanceof Error ? reason.message : 'Could not load registered applications'))
+      .finally(() => setLoading(false))
+  }, [])
+
+  return <Section title={error ? 'Registered applications' : `Registered applications · ${applications.length}`}>
+    <p className="operations-note">Application and environment registrations available to the current RAGGuard tenant. “Queryable” indicates a configured managed index or external adapter, not a connectivity check.</p>
+    {error && <ErrorMessage message={error} />}
+    {loading ? <p className="operations-note">Loading application registry…</p> : error ? null : applications.length ? <div className="operations-table-wrap"><table className="operations-table">
+      <thead><tr><th>Name</th><th>Application ID</th><th>Environment</th><th>Integration</th><th>Knowledge source</th><th>Query Lab</th><th>Status</th></tr></thead>
+      <tbody>{applications.map((application) => <tr key={`${application.application_id}:${application.environment}`}>
+        <td>{application.display_name}</td>
+        <td>{application.application_id}</td>
+        <td>{application.environment}</td>
+        <td>{application.observation_enabled ? 'Observation API · credential reference set' : 'Observation API not registered'}</td>
+        <td>{display(application.knowledge_source)}</td>
+        <td>{application.queryable ? 'Queryable' : 'Observation only'}</td>
+        <td>{application.active ? 'Active' : 'Inactive'}</td>
       </tr>)}</tbody>
-    </table></div> : <p className="operations-empty">No application recovery records.</p>}
+    </table></div> : <p className="operations-empty">No applications are registered for this tenant.</p>}
   </Section>
 }
 
@@ -252,11 +252,11 @@ const titles: Record<Props['view'], string> = {
 }
 
 export default function Operations({ view, onOpenRecoveries }: Props) {
-  const { records, error, loading } = useRecoveryRecords()
+  const { records, error, loading, scope } = useRecoveryRecords()
   return <div className="page operations-page">
     <div className="recoveries-heading"><div><span className="recovery-eyebrow">RAGGUARD OPERATIONS</span><h2>{titles[view]}</h2></div></div>
     {error && <ErrorMessage message={error} />}
-    {view !== 'capabilities' && <p className="operations-note">Aggregates include all recovery records visible to this tenant, loaded in pages.</p>}
-    {loading ? <Section title="Loading"><p className="operations-note">Loading recovery audit data…</p></Section> : view === 'capabilities' ? <CapabilityView /> : view === 'failures' ? <FailureView records={records} onOpenRecoveries={onOpenRecoveries} /> : view === 'escalations' ? <EscalationView records={records} onOpenRecoveries={onOpenRecoveries} /> : view === 'strategies' ? <StrategyView records={records} /> : view === 'applications' ? <ApplicationView records={records} onOpenRecoveries={onOpenRecoveries} /> : <AuditView records={records} onOpenRecoveries={onOpenRecoveries} />}
+    {view !== 'capabilities' && view !== 'applications' && <p className="operations-note">Aggregates include all recovery records visible to RAGGuard tenant <strong>{scope?.ragguard_tenant_id || 'loading'}</strong> for application <strong>{scope?.application_id || 'loading'}</strong>, loaded in pages.</p>}
+    {view === 'applications' ? <ApplicationView /> : loading ? <Section title="Loading"><p className="operations-note">Loading recovery audit data…</p></Section> : view === 'capabilities' ? <CapabilityView /> : view === 'failures' ? <FailureView records={records} onOpenRecoveries={onOpenRecoveries} /> : view === 'escalations' ? <EscalationView records={records} onOpenRecoveries={onOpenRecoveries} /> : view === 'strategies' ? <StrategyView records={records} /> : <AuditView records={records} onOpenRecoveries={onOpenRecoveries} />}
   </div>
 }

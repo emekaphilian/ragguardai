@@ -8,6 +8,8 @@ from ragguard.config import ServiceAuthSettings, Settings, load_settings
 from ragguard.evaluation.live import RAGObservation
 from ragguard.observability.observation_repository import InMemoryObservationRepository
 from ragguard.tenants.models import TenantPolicy
+from ragguard.observability.application_repository import InMemoryApplicationRepository
+from ragguard.tenants.application_registration import ApplicationRegistration
 
 client = TestClient(app)
 
@@ -15,6 +17,16 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def configure_service_auth(monkeypatch):
     observation_repository = InMemoryObservationRepository()
+    application_repository = InMemoryApplicationRepository()
+    application_repository.upsert(ApplicationRegistration(
+        ragguard_tenant_id="development",
+        application_id="trustassist",
+        display_name="TrustAssist",
+        environment="production",
+        knowledge_source="managed_index",
+        vector_namespace="development",
+        repair_authorized=True,
+    ))
     settings = Settings(
         tenant_policies=(
             TenantPolicy(
@@ -38,6 +50,11 @@ def configure_service_auth(monkeypatch):
         observations_route,
         "observation_repository",
         observation_repository,
+    )
+    monkeypatch.setattr(
+        observations_route,
+        "application_repository",
+        application_repository,
     )
     return observation_repository
 
@@ -255,6 +272,103 @@ def test_observation_source_contract_has_no_tenant_id():
     from ragguard.evaluation.live import ObservationSource
 
     assert set(ObservationSource.model_fields) == {"application_id", "environment"}
+
+
+def test_registered_observation_adapter_records_repair_unauthorized(monkeypatch):
+    applications = InMemoryApplicationRepository()
+    applications.upsert(ApplicationRegistration(
+        ragguard_tenant_id="development",
+        application_id="legal-rag",
+        display_name="Legal RAG",
+        environment="production",
+        knowledge_source="observation_only",
+        observation_token_env_var="RAGGUARD_LEGAL_RAG_TOKEN",
+    ))
+    monkeypatch.setattr(observations_route, "application_repository", applications)
+    monkeypatch.setenv("RAGGUARD_LEGAL_RAG_TOKEN", "legal-rag-token")
+
+    response = post_observation(
+        {
+            "query": "What is the retention period?",
+            "retrieved_chunks": [],
+            "retrieval_method": "vector",
+        },
+        authorization="Bearer legal-rag-token",
+        source_application="legal-rag",
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "repair_not_authorized"
+    assert body["failure"]["failure_type"] == "NO_RETRIEVAL"
+    assert body["recovery"]["status"] == "repair_not_authorized"
+    assert body["recovery"]["repair_capability"] == "available"
+    assert body["recovery"]["repair_authorization"] == "not_authorized"
+    assert body["recovery"]["repair_attempted"] is False
+    assert body["recovery"]["authorization_source"] == "application_registration"
+    assert "has not authorized" in body["recovery"]["authorization_reason"]
+    saved_observation = observations_route.observation_repository.list()[0]
+    assert saved_observation.recovery == body["recovery"]
+    audit = observations_route.recovery_repository.get(body["recovery"]["recovery_id"])
+    assert audit is not None
+    assert audit.graph_run_id is None
+    assert audit.final_status == "repair_not_authorized"
+    assert audit.repair_attempted is False
+    assert any(event.event_type.value == "repair_not_authorized" for event in audit.events)
+    detail = client.get(f"/api/v1/recoveries/{audit.recovery_id}")
+    assert detail.status_code == 200
+    assert detail.json()["graph_run_id"] is None
+    assert detail.json()["repair_capability"] == "available"
+    assert detail.json()["repair_authorization"] == "not_authorized"
+    assert detail.json()["authorization_reason"] == body["recovery"]["authorization_reason"]
+
+
+def test_authorized_external_application_enters_recovery_flow(monkeypatch):
+    applications = InMemoryApplicationRepository()
+    applications.upsert(ApplicationRegistration(
+        ragguard_tenant_id="development",
+        application_id="external-rag",
+        display_name="External RAG",
+        environment="production",
+        knowledge_source="external_rag_api",
+        query_endpoint_url="https://rag.example.test/query",
+        observation_token_env_var="RAGGUARD_EXTERNAL_RAG_TOKEN",
+        repair_authorized=True,
+    ))
+    monkeypatch.setattr(observations_route, "application_repository", applications)
+    monkeypatch.setenv("RAGGUARD_EXTERNAL_RAG_TOKEN", "external-rag-token")
+    recovered = {}
+
+    def recover(**kwargs):
+        recovered.update(kwargs)
+        return {
+            "status": "escalated",
+            "recovery_id": "authorized-external-recovery",
+            "graph_run_id": "authorized-external-graph",
+            "failure_event": kwargs["failure_event"],
+            "repair_attempts": [],
+            "completed_nodes": ["diagnose"],
+            "escalation_reason": "No applicable repair strategy.",
+        }
+
+    monkeypatch.setattr(observations_route.recovery_service, "recover", recover)
+    response = post_observation(
+        {
+            "query": "What is the retention period?",
+            "retrieved_chunks": [],
+            "retrieval_method": "vector",
+        },
+        authorization="Bearer external-rag-token",
+        source_application="external-rag",
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert recovered
+    assert body["status"] == "escalated"
+    assert body["recovery"]["repair_authorization"] == "authorized"
+    assert body["recovery"]["authorization_source"] == "application_registration"
+    assert body["recovery"]["repair_attempted"] is False
 
 
 def test_observations_source_application_must_match_authentication():

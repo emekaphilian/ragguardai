@@ -1,9 +1,12 @@
 from fastapi.testclient import TestClient
+from fastapi import FastAPI
 from datetime import datetime, timedelta, timezone
+import importlib
 
 from ragguard.api.app import app
 from ragguard.api.recovery_service import ObservationRecoveryService
 from ragguard.api.routes import observations as observations_route
+from ragguard.api.recovery_routes import build_recovery_router
 from ragguard.config import ServiceAuthSettings, Settings
 from ragguard.detection.live_detector import LiveFailureDetector
 from ragguard.observability.recovery_audit import (
@@ -14,6 +17,11 @@ from ragguard.observability.recovery_repository import (
     InMemoryRecoveryAuditRepository,
 )
 from ragguard.tenants.models import TenantPolicy
+from ragguard.auth.tenant_context import TenantContext
+from ragguard.observability.application_repository import InMemoryApplicationRepository
+from ragguard.tenants.application_registration import ApplicationRegistration
+
+recovery_routes = importlib.import_module("ragguard.api.recovery_routes")
 
 
 def test_recovery_audit_record_tracks_lifecycle():
@@ -96,6 +104,16 @@ def test_external_observation_tenant_is_audit_metadata_only():
 
 
 def test_observation_recovery_is_persisted_and_retrievable(monkeypatch):
+    applications = InMemoryApplicationRepository()
+    applications.upsert(ApplicationRegistration(
+        ragguard_tenant_id="development",
+        application_id="trustassist",
+        display_name="TrustAssist",
+        environment="test",
+        knowledge_source="managed_index",
+        vector_namespace="development",
+        repair_authorized=True,
+    ))
     settings = Settings(
         tenant_policies=(
             TenantPolicy(
@@ -112,6 +130,7 @@ def test_observation_recovery_is_persisted_and_retrievable(monkeypatch):
         ),
     )
     monkeypatch.setattr(observations_route, "load_settings", lambda: settings)
+    monkeypatch.setattr(observations_route, "application_repository", applications)
     monkeypatch.setattr(
         observations_route,
         "recovery_service",
@@ -156,6 +175,9 @@ def test_observation_recovery_is_persisted_and_retrievable(monkeypatch):
     assert detail.status_code == 200
     assert detail.json()["recovery_id"] == recovery_id
     assert "observation_snapshot" not in detail.json()
+    assert detail.json()["query"] == "refund policy"
+    assert detail.json()["retrieved_chunks"] == []
+    assert "answer" not in detail.json()
     assert detail.json()["events"][-1]["event_type"] == "run_completed"
 
 
@@ -205,6 +227,62 @@ def test_recovery_routes_hide_records_from_other_internal_tenants(monkeypatch):
     assert page["page"] == 1
     assert page["has_next"] is False
     assert detail.status_code == 404
+
+
+def test_recovery_routes_list_sibling_applications_but_respect_internal_tenant(monkeypatch):
+    repository = InMemoryRecoveryAuditRepository()
+    applications = InMemoryApplicationRepository()
+    for app_id in ("supportbot", "legalbot"):
+        applications.upsert(ApplicationRegistration(
+            ragguard_tenant_id="tenant-a",
+            application_id=app_id,
+            display_name=app_id,
+            environment="production",
+            knowledge_source="observation_only",
+            observation_token_env_var=f"{app_id.upper()}_OBSERVATION_TOKEN",
+        ))
+        repository.save(RecoveryAuditRecord.create(
+            graph_run_id=f"graph-{app_id}",
+            application_id=app_id,
+            environment="production",
+            ragguard_tenant_id="tenant-a",
+        ))
+    repository.save(RecoveryAuditRecord.create(
+        graph_run_id="graph-other-tenant",
+        application_id="financebot",
+        environment="production",
+        ragguard_tenant_id="tenant-b",
+    ))
+    monkeypatch.setattr(recovery_routes, "application_repository", applications)
+
+    api = FastAPI()
+    api.include_router(build_recovery_router(repository))
+    api.dependency_overrides[recovery_routes.tenant_context] = lambda: TenantContext(
+        tenant_id="tenant-a",
+        application_id="supportbot",
+        environment="production",
+        user_id=None,
+        roles=(),
+        vector_namespace="tenant-a",
+        policy_version="v1",
+        index_version="v1",
+    )
+    client = TestClient(api)
+
+    all_apps = client.get("/api/v1/recoveries")
+    one_app = client.get("/api/v1/recoveries", params={"application_id": "legalbot"})
+    legal_record = repository.list(
+        ragguard_tenant_id="tenant-a",
+        application_id="legalbot",
+    )[0]
+    legal_detail = client.get(f"/api/v1/recoveries/{legal_record.recovery_id}")
+
+    assert all_apps.status_code == 200
+    assert all_apps.json()["total"] == 2
+    assert {item["application_id"] for item in all_apps.json()["items"]} == {"supportbot", "legalbot"}
+    assert one_app.status_code == 200
+    assert [item["application_id"] for item in one_app.json()["items"]] == ["legalbot"]
+    assert legal_detail.status_code == 200
 
 
 def test_recovery_list_pages_scoped_records_and_enforces_configured_max(monkeypatch):

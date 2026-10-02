@@ -1,10 +1,13 @@
-from fastapi import APIRouter, Depends
+from dataclasses import replace
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ragguard.agents.graph import run_sequential
 from ragguard.agents.state import RAGGuardState
 from ragguard.api.middleware import tenant_context
 from ragguard.api.observation_views import observation_failure
-from ragguard.api.runtime import observation_repository, workspace
+from ragguard.api.routes.dashboard import dashboard_data
+from ragguard.api.runtime import application_repository, observation_repository, workspace
 from ragguard.api.schemas import DetectRequest, RepairRequest
 from ragguard.auth.tenant_context import TenantContext
 from ragguard.config import load_settings
@@ -63,8 +66,23 @@ def repair(request: RepairRequest, context: TenantContext = Depends(tenant_conte
             request.max_repair_attempts,
             settings.max_repair_attempts,
         )
+    application = application_repository.get(
+        context.tenant_id,
+        request.application_id or context.application_id,
+        request.environment or context.environment,
+    )
+    if application is None:
+        raise HTTPException(status_code=404, detail="Application is not registered for this RAGGuard tenant and environment.")
+    if application.knowledge_source != "managed_index":
+        raise HTTPException(status_code=409, detail="Repair testing is only available for RAGGuard-managed indexes.")
+    application_context = replace(
+        context,
+        application_id=application.application_id,
+        environment=application.environment,
+        vector_namespace=application.vector_namespace or context.vector_namespace,
+    )
     retrieval = workspace.store.search(
-        request.query, top_k=request.top_k, namespace=context.vector_namespace
+        request.query, top_k=request.top_k, namespace=application_context.vector_namespace
     )
     evaluator = Evaluator()
     relevant_ids = set(request.relevant_chunk_ids)
@@ -73,7 +91,7 @@ def repair(request: RepairRequest, context: TenantContext = Depends(tenant_conte
     )
     state = RAGGuardState(
         query=request.query,
-        context=context,
+        context=application_context,
         retrieval_result=retrieval,
         evaluation_result=before_metrics,
     )
@@ -113,7 +131,9 @@ def repair(request: RepairRequest, context: TenantContext = Depends(tenant_conte
             "before": result.before_retrieval_stats if result else {},
             "after": result.after_retrieval_stats if result else {},
         },
-        "tenant_id": context.tenant_id,
+        "tenant_id": application_context.tenant_id,
+        "application_id": application.application_id,
+        "environment": application.environment,
     }
     workspace.repairs.insert(0, repair)
     return repair
@@ -121,20 +141,34 @@ def repair(request: RepairRequest, context: TenantContext = Depends(tenant_conte
 
 @router.get("/metrics")
 def metrics(context: TenantContext = Depends(tenant_context)):
-    return workspace.dashboard(context)["metrics"]
+    return dashboard_data(context)["metrics"]
 
 
 @router.get("/failures")
-def failures(context: TenantContext = Depends(tenant_context)):
+def failures(
+    context: TenantContext = Depends(tenant_context),
+    application_id: str | None = Query(default=None),
+    environment: str | None = Query(default=None),
+):
+    registrations = application_repository.list(context.tenant_id, active_only=False)
+    if application_id is not None and not any(
+        application.application_id == application_id
+        and (environment is None or application.environment == environment)
+        for application in registrations
+    ):
+        raise HTTPException(status_code=404, detail="Application not found for this RAGGuard tenant.")
     local_failures = [
         failure for failure in workspace.failures
         if failure["tenant_id"] == context.tenant_id
+        and (application_id is None or failure.get("application_id") == application_id)
+        and (environment is None or failure.get("environment") == environment)
     ]
     observed_failures = [
         observation_failure(record)
         for record in observation_repository.list(
             ragguard_tenant_id=context.tenant_id,
-            application_id=context.application_id,
+            application_id=application_id,
+            environment=environment,
             failure_detected=True,
             limit=250,
         )

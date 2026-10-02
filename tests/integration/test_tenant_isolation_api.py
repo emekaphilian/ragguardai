@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from ragguard.api.app import app
-from ragguard.api.runtime import workspace
+from ragguard.api.runtime import application_repository, workspace
 from ragguard.auth.tenant_context import TenantContext
 from ragguard.common.schemas import Document
 from ragguard.config import Settings
@@ -126,6 +126,7 @@ def test_api_query_isolates_tenant_documents(monkeypatch):
 
     try:
         service = TenantService(settings)
+        application_repository.bootstrap(settings.tenant_policies)
         tenant_a = service.resolve("tenant-a")
         tenant_b = service.resolve("tenant-b")
 

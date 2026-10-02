@@ -51,6 +51,41 @@ than the configured cutoff; active `running` records are preserved. The event
 bus keeps its recent in-process buffer according to
 `RAGGUARD_EVENT_RETENTION_DAYS` (default 30).
 
+## Application registry and adapters
+
+`registered_applications` is the PostgreSQL source of truth for application,
+environment, integration mode, and knowledge-source configuration. Startup
+applies its migration. Configured tenant policies are inserted as
+managed-index registrations only when no matching registration exists; the
+registry can also be bootstrapped explicitly with `POST
+/api/v1/admin/applications/bootstrap-configured`.
+
+The tenant-scoped `GET /api/v1/applications` endpoint returns active public
+registration metadata for Query Lab. It never returns credential values or
+environment-variable references. Administrators can use the following routes
+with `Authorization: Bearer $RAGGUARD_ADMIN_TOKEN`:
+
+```text
+GET    /api/v1/admin/applications?ragguard_tenant_id=<tenant>
+PUT    /api/v1/admin/applications
+DELETE /api/v1/admin/applications/<tenant>/<application>/<environment>
+```
+
+Registrations support `managed_index`, `external_rag_api`, and
+`observation_only`. Managed indexes specify a `vector_namespace`. External
+adapters use an HTTPS `query_endpoint_url` implementing contract v1: accept
+`contract_version`, `query`, `top_k`, and `method`; return an answer, retrieved
+chunk IDs/scores, retrieval method, latency, and embedding-degradation status.
+RAGGuard rejects endpoints resolving to non-public IP addresses and does not
+follow redirects.
+
+Store external API token values only as server-side environment variables. The
+database stores references such as `SUPPORTBOT_QUERY_TOKEN` in
+`query_token_env_var`; the frontend receives neither the reference nor its
+value. Per-application observation credentials use the same pattern through
+`observation_token_env_var`. The legacy shared
+`RAGGUARD_SERVICE_TOKEN` remains supported during migration.
+
 ## Recovery replay
 
 `POST /api/v1/replays` accepts a recovery ID and defaults to `dry_run`. Replay

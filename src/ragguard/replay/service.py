@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from uuid import uuid4
 
 from ragguard.api.recovery_service import ObservationRecoveryService
@@ -44,9 +45,14 @@ class RecoveryReplayService:
         if (
             original is None
             or original.ragguard_tenant_id != context.tenant_id
-            or original.application_id != context.application_id
         ):
             raise ReplayNotFoundError("Recovery record not found.")
+
+        replay_context = replace(
+            context,
+            application_id=original.application_id or context.application_id,
+            environment=original.environment or context.environment,
+        )
 
         if not original.observation_snapshot:
             raise ReplayUnavailableError(
@@ -75,7 +81,7 @@ class RecoveryReplayService:
         observation = RAGObservation.model_validate(original.observation_snapshot)
         replay_state = run_replay(
             observation=observation,
-            context=context,
+            context=replay_context,
             recovery_service=recovery_service,
         )
         replay_state.setdefault("recovery_id", str(uuid4()))

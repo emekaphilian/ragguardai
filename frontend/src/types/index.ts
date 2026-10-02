@@ -32,7 +32,7 @@ export type RecoveryAttempt = {
 
 export type RecoveryAuditRecord = {
 	recovery_id: string
-	graph_run_id: string
+	graph_run_id: string | null
 	started_at: string
 	completed_at?: string | null
 	failure_id?: string | null
@@ -45,6 +45,15 @@ export type RecoveryAuditRecord = {
 	original_score?: number | null
 	final_score?: number | null
 	improvement?: number | null
+	repair_capability?: 'available' | 'unavailable' | null
+	repair_authorization?: 'authorized' | 'not_authorized' | null
+	repair_attempted?: boolean
+	authorization_source?: string | null
+	authorization_reason?: string | null
+	query?: string | null
+	retrieval_method?: string | null
+	embedding_degraded?: boolean | null
+	retrieved_chunks?: {id: string; score: number}[]
 	attempts: RecoveryAttempt[]
 	events: RecoveryAuditEvent[]
 }

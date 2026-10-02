@@ -26,6 +26,7 @@ class ObservationRepository(Protocol):
         application_id: str | None = None,
         status: str | None = None,
         failure_detected: bool | None = None,
+        environment: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[ObservationRecord]:
@@ -38,6 +39,7 @@ class ObservationRepository(Protocol):
         application_id: str | None = None,
         status: str | None = None,
         failure_detected: bool | None = None,
+        environment: str | None = None,
     ) -> int:
         ...
 
@@ -71,6 +73,7 @@ class InMemoryObservationRepository:
         application_id: str | None = None,
         status: str | None = None,
         failure_detected: bool | None = None,
+        environment: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[ObservationRecord]:
@@ -83,6 +86,7 @@ class InMemoryObservationRepository:
             application_id=application_id,
             status=status,
             failure_detected=failure_detected,
+            environment=environment,
         )
         records.sort(key=lambda record: record.created_at, reverse=True)
         return records[offset:offset + limit]
@@ -94,6 +98,7 @@ class InMemoryObservationRepository:
         application_id: str | None = None,
         status: str | None = None,
         failure_detected: bool | None = None,
+        environment: str | None = None,
     ) -> int:
         with self._lock:
             records = list(self._records.values())
@@ -103,6 +108,7 @@ class InMemoryObservationRepository:
             application_id=application_id,
             status=status,
             failure_detected=failure_detected,
+            environment=environment,
         ))
 
     @staticmethod
@@ -120,6 +126,7 @@ class InMemoryObservationRepository:
         application_id: str | None,
         status: str | None,
         failure_detected: bool | None,
+        environment: str | None,
     ) -> list[ObservationRecord]:
         filters = (
             ("ragguard_tenant_id", ragguard_tenant_id),
@@ -136,5 +143,10 @@ class InMemoryObservationRepository:
             records = [
                 record for record in records
                 if (record.failure is not None) is failure_detected
+            ]
+        if environment is not None:
+            records = [
+                record for record in records
+                if record.observation.get("source", {}).get("environment") == environment
             ]
         return records

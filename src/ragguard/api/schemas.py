@@ -113,6 +113,11 @@ class RecoveryResultResponse(BaseModel):
     improvement: float | None = None
     completed_nodes: list[str] = Field(default_factory=list)
     escalation_reason: str | None = None
+    repair_capability: Literal["available", "unavailable"] | None = None
+    repair_authorization: Literal["authorized", "not_authorized"] | None = None
+    repair_attempted: bool = False
+    authorization_source: str | None = None
+    authorization_reason: str | None = None
 
 
 class ObservationRecoveryResponse(BaseModel):
@@ -147,7 +152,7 @@ class RecoveryAuditEventResponse(BaseModel):
 
 class RecoveryAuditResponse(BaseModel):
     recovery_id: str
-    graph_run_id: str
+    graph_run_id: str | None = None
     started_at: datetime
     completed_at: datetime | None = None
     failure_id: str | None = None
@@ -160,6 +165,11 @@ class RecoveryAuditResponse(BaseModel):
     original_score: float | None = None
     final_score: float | None = None
     improvement: float | None = None
+    repair_capability: str | None = None
+    repair_authorization: str | None = None
+    repair_attempted: bool = False
+    authorization_source: str | None = None
+    authorization_reason: str | None = None
     query: str | None = None
     retrieval_method: str | None = None
     embedding_degraded: bool | None = None

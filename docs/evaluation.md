@@ -9,4 +9,4 @@ Metrics:
 - citation accuracy
 - overall score
 
-The local implementation is intentionally offline and reproducible. RAGAS is provided as an optional adapter point rather than being required for the core pipeline.
+The local implementation is intentionally offline and reproducible. RAGAS is not integrated in this release; evaluation uses RAGGuard's project-owned metrics and live reliability signals.

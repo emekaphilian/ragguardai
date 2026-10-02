@@ -103,6 +103,47 @@ def test_postgres_repository_round_trips_audit_records():
     assert connection.queries[-1][1][-2:] == (100, 0)
 
 
+def test_postgres_repository_round_trips_repair_authorization_denial():
+    connection = FakeConnection()
+    repository = PostgreSQLRecoveryAuditRepository(
+        connection_factory=lambda: connection,
+    )
+    reason = "The application has not authorized repair."
+    record = RecoveryAuditRecord.create(
+        graph_run_id=None,
+        failure_id="failure-1",
+        failure_type="DUPLICATE_CONTEXT",
+        application_id="trustassist",
+        environment="production",
+        ragguard_tenant_id="development",
+        repair_capability="available",
+        repair_authorization="not_authorized",
+        repair_attempted=False,
+        authorization_source="application_registration",
+        authorization_reason=reason,
+    )
+    record.add_event(
+        RecoveryEventType.REPAIR_NOT_AUTHORIZED,
+        status="not_authorized",
+        reason=reason,
+        metadata={"repair_attempted": False},
+    )
+    record.complete("repair_not_authorized")
+
+    repository.save(record)
+    loaded = repository.get(record.recovery_id)
+
+    assert loaded is not None
+    assert loaded.graph_run_id is None
+    assert loaded.final_status == "repair_not_authorized"
+    assert loaded.repair_capability == "available"
+    assert loaded.repair_authorization == "not_authorized"
+    assert loaded.repair_attempted is False
+    assert loaded.authorization_source == "application_registration"
+    assert loaded.authorization_reason == reason
+    assert loaded.events[0].event_type == RecoveryEventType.REPAIR_NOT_AUTHORIZED
+
+
 def test_postgres_repository_uses_parameterized_filters():
     connection = FakeConnection()
     repository = PostgreSQLRecoveryAuditRepository(

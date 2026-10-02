@@ -34,8 +34,8 @@ class PostgreSQLApplicationRepository(ApplicationRepository):
                         ragguard_tenant_id, application_id, display_name,
                         environment, knowledge_source, vector_namespace,
                         query_endpoint_url, query_token_env_var,
-                        observation_token_env_var, active
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        observation_token_env_var, active, repair_authorized
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (ragguard_tenant_id, application_id, environment)
                     DO UPDATE SET
                         display_name = EXCLUDED.display_name,
@@ -45,6 +45,7 @@ class PostgreSQLApplicationRepository(ApplicationRepository):
                         query_token_env_var = EXCLUDED.query_token_env_var,
                         observation_token_env_var = EXCLUDED.observation_token_env_var,
                         active = EXCLUDED.active,
+                        repair_authorized = EXCLUDED.repair_authorized,
                         updated_at = now()
                     """,
                     self._parameters(application),
@@ -140,7 +141,8 @@ class PostgreSQLApplicationRepository(ApplicationRepository):
         return (
             "ragguard_tenant_id, application_id, display_name, environment, "
             "knowledge_source, vector_namespace, query_endpoint_url, "
-            "query_token_env_var, observation_token_env_var, active"
+            "query_token_env_var, observation_token_env_var, active, "
+            "repair_authorized"
         )
 
     @staticmethod
@@ -156,11 +158,24 @@ class PostgreSQLApplicationRepository(ApplicationRepository):
             application.query_token_env_var,
             application.observation_token_env_var,
             application.active,
+            application.repair_authorized,
         )
 
     @staticmethod
     def _decode(row: tuple[Any, ...]) -> ApplicationRegistration:
-        return ApplicationRegistration(*row)
+        return ApplicationRegistration(
+            ragguard_tenant_id=row[0],
+            application_id=row[1],
+            display_name=row[2],
+            environment=row[3],
+            knowledge_source=row[4],
+            vector_namespace=row[5],
+            query_endpoint_url=row[6],
+            query_token_env_var=row[7],
+            observation_token_env_var=row[8],
+            active=row[9],
+            repair_authorized=row[10],
+        )
 
 
 def create_application_repository(

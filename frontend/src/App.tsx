@@ -4,7 +4,7 @@ import RecoverySummary from './components/RecoverySummary'
 import Generic from './pages/Generic'
 import Operations from './pages/Operations'
 import Overview from './pages/Overview'
-import QueryLab from './pages/QueryLab'
+import QueryLab from './pages/QueryLabExperience'
 import Runs from './pages/Runs'
 import Recoveries from './pages/Recoveries'
 

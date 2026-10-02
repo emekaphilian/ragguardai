@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { getApiHealth } from '../api/client'
+import { getApiHealth, getDashboard } from '../api/client'
 
 const items = [
   ['overview', 'Overview'],
@@ -27,12 +27,16 @@ export default function Layout({ page, setPage, children }: {
   children: ReactNode
 }) {
   const [apiOnline, setApiOnline] = useState<boolean | null>(null)
+  const [scope, setScope] = useState<{ ragguard_tenant_id: string; application_id: string; environment: string } | null>(null)
   useEffect(() => {
     let active = true
     const check = () => getApiHealth().then(() => { if (active) setApiOnline(true) }).catch(() => { if (active) setApiOnline(false) })
+    const loadScope = () => getDashboard().then((dashboard) => { if (active) setScope(dashboard.scope || null) }).catch(() => { if (active) setScope(null) })
     check()
+    void loadScope()
     const timer = window.setInterval(check, 30000)
-    return () => { active = false; window.clearInterval(timer) }
+    const scopeTimer = window.setInterval(loadScope, 30000)
+    return () => { active = false; window.clearInterval(timer); window.clearInterval(scopeTimer) }
   }, [])
 
   return <div className="app">
@@ -46,7 +50,7 @@ export default function Layout({ page, setPage, children }: {
     <main className="main">
       <header className="topbar">
         <div><span className="crumb">RAGGUARD / {page.toUpperCase()}</span><h1>AI Reliability Control Center</h1></div>
-        <div className="top-actions"><span className="env">DEV</span><span className={`healthy ${apiOnline === false ? 'offline' : ''}`}><i /> API {apiOnline === null ? 'checking' : apiOnline ? 'online' : 'offline'}</span></div>
+        <div className="top-actions"><span className="env">{scope ? `${scope.ragguard_tenant_id} · ${scope.application_id} · ${scope.environment}` : 'Scope unavailable'}</span><span className={`healthy ${apiOnline === false ? 'offline' : ''}`}><i /> API {apiOnline === null ? 'checking' : apiOnline ? 'online' : 'offline'}</span></div>
       </header>
       {children}
     </main>

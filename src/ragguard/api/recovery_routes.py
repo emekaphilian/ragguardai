@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ragguard.api.middleware import tenant_context
+from ragguard.api.runtime import application_repository
 from ragguard.api.schemas import RecoveryAuditPageResponse, RecoveryAuditResponse
 from ragguard.auth.tenant_context import TenantContext
 from ragguard.config import load_settings
@@ -32,13 +33,19 @@ def build_recovery_router(
                 status_code=422,
                 detail=f"page_size must not exceed {max_page_size}.",
             )
-        if application_id is not None and application_id != context.application_id:
-            raise HTTPException(status_code=403, detail="Application access denied.")
+        if application_id is not None and not any(
+            application.application_id == application_id
+            for application in application_repository.list(
+                context.tenant_id,
+                active_only=False,
+            )
+        ):
+            raise HTTPException(status_code=404, detail="Application not found for this RAGGuard tenant.")
 
         filters = {
             "ragguard_tenant_id": context.tenant_id,
             "tenant_id": tenant_id,
-            "application_id": context.application_id,
+            "application_id": application_id,
         }
         total = repository.count(**filters)
         records = repository.list(
@@ -63,12 +70,26 @@ def build_recovery_router(
         if (
             record is None
             or record.ragguard_tenant_id != context.tenant_id
-            or record.application_id != context.application_id
         ):
             raise HTTPException(
                 status_code=404,
                 detail="Recovery record not found.",
             )
-        return record_to_dict(record)
+        response = record_to_dict(record)
+        snapshot = record.observation_snapshot or {}
+        response.update({
+            "query": snapshot.get("query"),
+            "retrieval_method": snapshot.get("retrieval_method"),
+            "embedding_degraded": snapshot.get("embedding_degraded"),
+            "retrieved_chunks": [
+                {
+                    "id": chunk.get("id"),
+                    "score": chunk.get("score"),
+                }
+                for chunk in snapshot.get("retrieved_chunks", [])
+                if isinstance(chunk, dict)
+            ],
+        })
+        return response
 
     return router

@@ -13,6 +13,7 @@ class ApplicationRegistration:
     display_name: str
     environment: str
     knowledge_source: KnowledgeSource
+    repair_authorized: bool = False
     vector_namespace: str | None = None
     query_endpoint_url: str | None = None
     query_token_env_var: str | None = None

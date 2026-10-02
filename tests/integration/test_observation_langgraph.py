@@ -13,12 +13,24 @@ from ragguard.evaluation.evaluator import Evaluator
 from ragguard.events.bus import InMemoryRecoveryEventBus
 from ragguard.repair.repair_engine import RepairEngine
 from ragguard.storage.vector_store import VectorStore
+from ragguard.observability.application_repository import InMemoryApplicationRepository
+from ragguard.tenants.application_registration import ApplicationRegistration
 from ragguard.tenants.models import TenantPolicy
 from ragguard.observability.recovery_audit import RecoveryEventType
 
 
 @pytest.fixture
 def observation_client(monkeypatch):
+    applications = InMemoryApplicationRepository()
+    applications.upsert(ApplicationRegistration(
+        ragguard_tenant_id="development",
+        application_id="trustassist",
+        display_name="TrustAssist",
+        environment="test",
+        knowledge_source="managed_index",
+        vector_namespace="development",
+        repair_authorized=True,
+    ))
     settings = Settings(
         tenant_policies=(
             TenantPolicy(
@@ -35,6 +47,7 @@ def observation_client(monkeypatch):
         ),
     )
     monkeypatch.setattr(observations_route, "load_settings", lambda: settings)
+    monkeypatch.setattr(observations_route, "application_repository", applications)
     monkeypatch.setattr(
         observations_route,
         "recovery_service",
@@ -112,6 +125,17 @@ def test_external_failure_without_repair_capability_escalates_safely(
     assert body["recovery"]["attempts"] == []
     assert "diagnose" in body["recovery"]["completed_nodes"]
     assert "retrieval_result" not in body["recovery"]
+    audit = observations_route.recovery_repository.get(
+        body["recovery"]["recovery_id"]
+    )
+    assert audit is not None
+    assert audit.attempts == []
+    plan_event = next(
+        event for event in audit.events
+        if event.event_type == RecoveryEventType.REPAIR_PLANNED
+    )
+    assert plan_event.status == "unavailable"
+    assert plan_event.reason
 
 
 def local_recovery_service(
@@ -195,6 +219,9 @@ def test_observation_failure_is_repaired_and_promoted(
     body = response.json()
     assert body["recovery"]["failure_detected"] is True
     assert body["recovery"]["status"] == "promoted"
+    assert body["recovery"]["repair_capability"] == "available"
+    assert body["recovery"]["repair_authorization"] == "authorized"
+    assert body["recovery"]["repair_attempted"] is True
     assert body["status"] == "promoted"
     assert body["recovery"]["attempts"][-1]["strategy"] == "DEDUPLICATE"
     assert body["recovery"]["attempts"][-1]["status"] == "promoted"
@@ -206,6 +233,9 @@ def test_observation_failure_is_repaired_and_promoted(
     )
     assert audit is not None
     assert audit.final_status == "promoted"
+    assert audit.repair_capability == "available"
+    assert audit.repair_authorization == "authorized"
+    assert audit.repair_attempted is True
     assert audit.tenant_id is None
     assert audit.ragguard_tenant_id == "development"
     assert [event.event_type.value for event in audit.events][-2:] == [
@@ -326,3 +356,11 @@ def test_observation_recovery_publishes_lifecycle_events(
     assert event_types[-1] == RecoveryEventType.RUN_COMPLETED
     assert all(event.tenant_id is None for event in events)
     assert all(event.ragguard_tenant_id == "development" for event in events)
+    audit = observations_route.recovery_repository.get(recovery_id)
+    assert audit is not None
+    validation = next(
+        event for event in audit.events
+        if event.event_type == RecoveryEventType.VALIDATION_COMPLETED
+    )
+    assert validation.metadata["before_retrieval"]["retrieved_chunks"] >= 0
+    assert validation.metadata["after_retrieval"]["retrieved_chunks"] >= 0

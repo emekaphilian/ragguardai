@@ -25,7 +25,7 @@ class FakeCursor:
                 else:
                     self.connection.rows[key] = (
                         parameters[0], parameters[1], parameters[1], parameters[3],
-                        "managed_index", parameters[4], None, None, None, True,
+                        "managed_index", parameters[4], None, None, None, True, False,
                     )
                     self.fetchone_result = (parameters[1],)
             else:
@@ -81,15 +81,25 @@ def test_postgres_application_repository_upsert_scope_and_bootstrap():
         query_endpoint_url="https://support.example.test/query",
         query_token_env_var="SUPPORTBOT_QUERY_TOKEN",
         observation_token_env_var="SUPPORTBOT_OBSERVATION_TOKEN",
+        repair_authorized=True,
     )
 
     repository.upsert(application)
 
     assert repository.get("tenant-a", "supportbot", "production") == application
+    assert application.repair_authorized is True
+    assert repository.get("tenant-a", "supportbot", "production").vector_namespace is None
     assert repository.list("tenant-a") == [application]
     assert repository.list("tenant-b") == []
     assert "SUPPORTBOT_QUERY_TOKEN" in connection.queries[0][1]
     assert "actual-token" not in str(connection.queries)
+    assert ApplicationRegistration(
+        ragguard_tenant_id="tenant-a",
+        application_id="unapproved",
+        display_name="Unapproved",
+        environment="production",
+        knowledge_source="observation_only",
+    ).repair_authorized is False
 
     policies = (
         TenantPolicy(
