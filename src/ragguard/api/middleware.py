@@ -7,8 +7,10 @@ from __future__ import annotations
 
 from fastapi import Request
 
+from ragguard.auth.authorization import resolve_authorized_tenant
+from ragguard.auth.principal import AuthenticationError, AuthenticationUnavailable
+from ragguard.auth.providers import authenticate_principal
 from ragguard.config import load_settings
-from ragguard.tenants.service import TenantService
 
 
 def tenant_context(request: Request):
@@ -16,13 +18,9 @@ def tenant_context(request: Request):
 
 
 def resolve_request_context(request: Request):
-    # This is a local-development transport only. The service still performs
-    # policy lookup and never treats the caller supplied id as a complete context.
     settings = load_settings()
-    # When no workspace tenant is explicitly selected, use the same internal
-    # tenant as service-authenticated observations. This keeps the default
-    # Control Center view aligned with the observation writer.
+    principal = authenticate_principal(request, settings)
+    # Tenant selection is not proof of access. Non-development identities must
+    # have an exact issuer/subject/tenant grant in RAGGuard's server policy.
     tenant_id = request.headers.get("X-RAGGuard-Tenant") or settings.service_auth.tenant_id
-    user_id = request.headers.get("X-RAGGuard-User")
-    roles = tuple(role.strip() for role in request.headers.get("X-RAGGuard-Roles", "").split(",") if role.strip())
-    return TenantService(settings).resolve(tenant_id, user_id=user_id, roles=roles)
+    return resolve_authorized_tenant(principal, tenant_id, settings)

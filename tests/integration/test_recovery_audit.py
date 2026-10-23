@@ -7,7 +7,7 @@ from ragguard.api.app import app
 from ragguard.api.recovery_service import ObservationRecoveryService
 from ragguard.api.routes import observations as observations_route
 from ragguard.api.recovery_routes import build_recovery_router
-from ragguard.config import ServiceAuthSettings, Settings
+from ragguard.config import AuthenticationSettings, ServiceAuthSettings, Settings
 from ragguard.detection.live_detector import LiveFailureDetector
 from ragguard.observability.recovery_audit import (
     RecoveryAuditRecord,
@@ -116,6 +116,7 @@ def test_observation_recovery_is_persisted_and_retrievable(monkeypatch):
         context_verification_authorized=True,
     ))
     settings = Settings(
+        authentication=AuthenticationSettings(mode="development_headers"),
         tenant_policies=(
             TenantPolicy(
                 tenant_id="development",
@@ -184,6 +185,7 @@ def test_observation_recovery_is_persisted_and_retrievable(monkeypatch):
 
 def test_recovery_routes_hide_records_from_other_internal_tenants(monkeypatch):
     settings = Settings(
+        authentication=AuthenticationSettings(mode="development_headers"),
         tenant_policies=(
             TenantPolicy(
                 tenant_id="development",
@@ -288,6 +290,7 @@ def test_recovery_routes_list_sibling_applications_but_respect_internal_tenant(m
 
 def test_recovery_list_pages_scoped_records_and_enforces_configured_max(monkeypatch):
     page_settings = Settings(
+        authentication=AuthenticationSettings(mode="development_headers"),
         tenant_policies=(
             TenantPolicy(
                 tenant_id="development",

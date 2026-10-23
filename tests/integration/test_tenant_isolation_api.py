@@ -4,7 +4,7 @@ from ragguard.api.app import app
 from ragguard.api.runtime import application_repository, workspace
 from ragguard.auth.tenant_context import TenantContext
 from ragguard.common.schemas import Document
-from ragguard.config import Settings
+from ragguard.config import AuthenticationSettings, Settings
 from ragguard.tenants.models import TenantPolicy
 from ragguard.tenants.service import TenantService
 
@@ -32,6 +32,7 @@ def test_unknown_tenant_is_rejected():
 
 def test_tenant_cannot_retrieve_another_tenants_document():
     settings = Settings(
+        authentication=AuthenticationSettings(mode="development_headers"),
         tenant_policies=(
             TenantPolicy(
                 tenant_id="tenant-a",
@@ -97,6 +98,7 @@ def test_tenant_cannot_retrieve_another_tenants_document():
 
 def test_api_query_isolates_tenant_documents(monkeypatch):
     settings = Settings(
+        authentication=AuthenticationSettings(mode="development_headers"),
         tenant_policies=(
             TenantPolicy(
                 tenant_id="tenant-a",

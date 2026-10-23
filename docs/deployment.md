@@ -4,6 +4,16 @@
 
 Run the pipeline directly or through Docker Compose.
 
+Human-user API routes require an explicit authentication mode. For local
+development and tests, `RAGGUARD_AUTH_MODE=development_headers` enables the
+development identity headers. This mode is rejected when `RAGGUARD_ENV` or the
+selected config identifies the environment as production. The default mode is
+`disabled`, which fails closed for human-user routes. OIDC and trusted-proxy
+modes are reserved for their verified adapters and are not enabled until those
+adapters are configured. Health checks, application observations, and the
+existing server-side administrative bearer-token endpoints remain separate
+authentication boundaries.
+
 ## Recovery audit persistence
 
 The API uses in-memory repositories by default for local development. The

@@ -1,4 +1,7 @@
 environment: testing
+authentication:
+  # Tests may use explicitly supplied development identities.
+  mode: development_headers
 top_k: 5
 thresholds:
   context_precision: 0.70

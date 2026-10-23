@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .exceptions import ragguard_exception_handler
+from ragguard.auth.principal import AuthenticationError, AuthenticationUnavailable
 from .routes.health import router as health_router
 from .routes.applications import router as applications_router
 from .routes.retrieval import router as retrieval_router
@@ -59,11 +60,25 @@ app.add_middleware(
 async def attach_tenant_context(request: Request, call_next):
     # External telemetry identifies its source in the observation contract;
     # it is independent of RAGGuard's internal workspace tenant context.
-    if request.url.path == "/api/v1/observations" or request.url.path.startswith("/api/v1/admin/"):
+    if (
+        request.url.path == "/api/v1/health"
+        or request.url.path == "/api/v1/observations"
+        or request.url.path.startswith("/api/v1/admin/")
+    ):
         return await call_next(request)
 
     try:
         request.state.tenant_context = resolve_request_context(request)
+    except AuthenticationError as exc:
+        return JSONResponse(
+            status_code=401,
+            content={"detail": str(exc)},
+        )
+    except AuthenticationUnavailable as exc:
+        return JSONResponse(
+            status_code=503,
+            content={"detail": str(exc)},
+        )
     except PermissionError:
         return JSONResponse(
             status_code=403,

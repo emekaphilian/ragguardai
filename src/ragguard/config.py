@@ -36,6 +36,22 @@ class ServiceAuthSettings:
 
 
 @dataclass(frozen=True)
+class TenantMembership:
+    issuer: str
+    subject: str
+    tenant_id: str
+    roles: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class AuthenticationSettings:
+    # ``disabled`` is the fail-closed default. Development headers require an
+    # explicit mode in the local/test configuration.
+    mode: str = "disabled"
+    tenant_memberships: tuple[TenantMembership, ...] = ()
+
+
+@dataclass(frozen=True)
 class Settings:
     environment: str = "development"
     top_k: int = 5
@@ -43,11 +59,19 @@ class Settings:
     llm: LLMSettings = LLMSettings()
     tenant_policies: tuple = ()
     service_auth: ServiceAuthSettings = ServiceAuthSettings()
+    authentication: AuthenticationSettings = AuthenticationSettings()
     max_repair_attempts: int = MAX_REPAIR_ATTEMPTS
     live_latency_thresholds_ms: dict[str, float] = field(default_factory=dict)
     audit_retention_days: int = DEFAULT_AUDIT_RETENTION_DAYS
     audit_max_page_size: int = DEFAULT_AUDIT_MAX_PAGE_SIZE
     event_retention_days: int = DEFAULT_EVENT_RETENTION_DAYS
+
+    def __post_init__(self) -> None:
+        mode = self.authentication.mode
+        if mode not in {"disabled", "development_headers", "oidc", "trusted_proxy"}:
+            raise ValueError(f"Unsupported authentication mode: {mode!r}.")
+        if mode == "development_headers" and self.environment.lower() not in {"development", "testing"}:
+            raise ValueError("Development-header authentication is restricted to development and tests.")
 
 
 def _resolve_llm_settings(data: dict | None) -> LLMSettings:
@@ -87,6 +111,39 @@ def _resolve_service_auth_settings() -> ServiceAuthSettings:
             "development",
         ),
     )
+
+
+def _resolve_authentication_settings(data: dict) -> AuthenticationSettings:
+    auth_data = data.get("authentication", {}) or {}
+    if not isinstance(auth_data, dict):
+        raise ValueError("authentication must be a mapping.")
+    mode = os.getenv("RAGGUARD_AUTH_MODE", auth_data.get("mode", "disabled"))
+    mode = str(mode).strip().lower()
+    if mode not in {"disabled", "development_headers", "oidc", "trusted_proxy"}:
+        raise ValueError(f"Unsupported RAGGUARD_AUTH_MODE: {mode!r}.")
+
+    memberships = []
+    for item in auth_data.get("tenant_memberships", ()) or ():
+        if not isinstance(item, dict):
+            raise ValueError("authentication.tenant_memberships entries must be mappings.")
+        issuer = str(item.get("issuer", "")).strip()
+        subject = str(item.get("subject", "")).strip()
+        tenant_id = str(item.get("tenant_id", "")).strip()
+        roles = item.get("roles", ()) or ()
+        if not issuer or not subject or not tenant_id:
+            raise ValueError("Each tenant membership requires issuer, subject, and tenant_id.")
+        if isinstance(roles, str):
+            roles = (roles,)
+        if not isinstance(roles, (list, tuple)):
+            raise ValueError("Tenant membership roles must be a list of strings.")
+        memberships.append(TenantMembership(
+            issuer=issuer,
+            subject=subject,
+            tenant_id=tenant_id,
+            roles=tuple(str(role).strip() for role in roles if str(role).strip()),
+        ))
+
+    return AuthenticationSettings(mode=mode, tenant_memberships=tuple(memberships))
 
 
 def _resolve_max_repair_attempts(data: dict) -> int:
@@ -157,8 +214,10 @@ def load_settings(path: str | None = None) -> Settings:
     p = Path(path)
     if not p.exists():
         return Settings(
+            environment=os.getenv("RAGGUARD_ENV", "development"),
             llm=_resolve_llm_settings({}),
             service_auth=_resolve_service_auth_settings(),
+            authentication=_resolve_authentication_settings({}),
             max_repair_attempts=_resolve_max_repair_attempts({}),
             live_latency_thresholds_ms=_resolve_live_latency_thresholds({}),
             **_resolve_audit_settings({}),
@@ -180,6 +239,7 @@ def load_settings(path: str | None = None) -> Settings:
             llm=_resolve_llm_settings({"llm": tenant_data.get("llm", {})}),
         ))
     service_auth = _resolve_service_auth_settings()
+    environment = os.getenv("RAGGUARD_ENV", str(data.get("environment", "development")))
     if not policies:
         # Keep the default single-tenant workspace visible in the registry too.
         # TenantService has historically supplied this fallback at request time,
@@ -192,12 +252,13 @@ def load_settings(path: str | None = None) -> Settings:
             llm=base_llm,
         ))
     return Settings(
-        environment=data.get("environment", "development"),
+        environment=environment,
         top_k=int(data.get("top_k", 5)),
         thresholds=Thresholds(**data.get("thresholds", {})),
         llm=base_llm,
         tenant_policies=tuple(policies),
         service_auth=service_auth,
+        authentication=_resolve_authentication_settings(data),
         max_repair_attempts=_resolve_max_repair_attempts(data),
         live_latency_thresholds_ms=_resolve_live_latency_thresholds(data),
         **_resolve_audit_settings(data),
