@@ -99,6 +99,7 @@ class RecoveryAuditRecord:
     repair_attempted: bool = False
     authorization_source: str | None = None
     authorization_reason: str | None = None
+    capability_execution: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     attempts: list[dict[str, Any]] = field(default_factory=list)
     events: list[RecoveryAuditEvent] = field(default_factory=list)
@@ -121,6 +122,7 @@ class RecoveryAuditRecord:
         repair_attempted: bool = False,
         authorization_source: str | None = None,
         authorization_reason: str | None = None,
+        capability_execution: dict[str, dict[str, Any]] | None = None,
     ) -> "RecoveryAuditRecord":
         return cls(
             recovery_id=str(uuid4()),
@@ -139,6 +141,7 @@ class RecoveryAuditRecord:
             repair_attempted=repair_attempted,
             authorization_source=authorization_source,
             authorization_reason=authorization_reason,
+            capability_execution=capability_execution or {},
         )
 
     def add_event(
@@ -225,6 +228,17 @@ def record_to_dict(
     *,
     include_observation: bool = False,
 ) -> dict[str, Any]:
+    repair_outcome = next(
+        (
+            event.metadata
+            for event in reversed(record.events)
+            if event.event_type in {
+                RecoveryEventType.REPAIR_PLANNED,
+                RecoveryEventType.REPAIR_NOT_AUTHORIZED,
+            }
+        ),
+        {},
+    )
     value = {
         "recovery_id": record.recovery_id,
         "graph_run_id": record.graph_run_id,
@@ -241,10 +255,14 @@ def record_to_dict(
         "final_score": record.final_score,
         "improvement": record.improvement,
         "repair_capability": record.repair_capability,
+        "repair_supported": repair_outcome.get("repair_supported"),
+        "repair_eligible": repair_outcome.get("repair_eligible"),
+        "repair_validated": repair_outcome.get("repair_validated"),
         "repair_authorization": record.repair_authorization,
         "repair_attempted": record.repair_attempted,
         "authorization_source": record.authorization_source,
         "authorization_reason": record.authorization_reason,
+        "capability_execution": record.capability_execution or None,
         "attempts": record.attempts,
         "events": [event_to_dict(event) for event in record.events],
     }
@@ -290,6 +308,7 @@ def record_from_dict(value: dict[str, Any]) -> RecoveryAuditRecord:
         repair_attempted=value.get("repair_attempted", False),
         authorization_source=value.get("authorization_source"),
         authorization_reason=value.get("authorization_reason"),
+        capability_execution=value.get("capability_execution", {}),
         attempts=list(value.get("attempts", [])),
         events=events,
     )

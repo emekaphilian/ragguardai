@@ -69,7 +69,7 @@ class InMemoryApplicationRepository(ApplicationRepository):
                 if application.active
                 and application.application_id == application_id
                 and application.environment == environment
-                and application.observation_token_env_var
+                and (application.observation_token_env_var or application.observation_token_hash)
             ]
 
     def bootstrap(self, policies: tuple[TenantPolicy, ...]) -> int:

@@ -3,6 +3,7 @@ import type { RecoveryAuditPage, RecoveryAuditRecord } from '../types'
 export type RepairCapability = { strategy: string; implemented: boolean; description: string }
 export type ApiHealth = { status: string; service: string }
 export type RegisteredApplication = {
+  ragguard_tenant_id?: string
   application_id: string
   display_name: string
   environment: string
@@ -10,6 +11,16 @@ export type RegisteredApplication = {
   active: boolean
   queryable: boolean
   observation_enabled: boolean
+  context_verification_authorized: boolean
+  independent_verification_authorized: boolean
+  repair_authorized: boolean
+  connection_status?: 'connected' | 'stale' | 'waiting_for_data'
+  last_observed_at?: string | null
+  last_evaluation_status?: string | null
+}
+export type ProvisionedApplication = RegisteredApplication & {
+  observation_credential: string
+  credential_notice: string
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1'
@@ -76,6 +87,10 @@ export async function runRepair(query:string,answer:string,relevantChunkIds:stri
 }
 export async function getDocuments(){const r=await apiFetch('/documents');if(!r.ok)throw new Error('Documents unavailable');return r.json()}
 export async function getApplications():Promise<RegisteredApplication[]>{const r=await apiFetch('/applications');if(r.status===404)throw new Error('The configured API does not provide the application registry endpoint (GET /api/v1/applications). Deploy the current RAGGuard API, then refresh this page.');if(!r.ok)throw new Error(await responseError(r,'Applications unavailable'));return r.json()}
+export async function onboardApplication(payload:{application_id:string;display_name:string;environment:string},adminToken:string):Promise<ProvisionedApplication>{const body={...payload,...(RAGGUARD_TENANT_ID?{ragguard_tenant_id:RAGGUARD_TENANT_ID}:{})};const r=await apiFetch('/admin/applications/onboard',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${adminToken}`},body:JSON.stringify(body)});if(!r.ok)throw new Error(await responseError(r,'Could not register application'));return r.json()}
+export async function rotateApplicationCredential(application:RegisteredApplication,adminToken:string):Promise<ProvisionedApplication>{const tenantId=application.ragguard_tenant_id||RAGGUARD_TENANT_ID;if(!tenantId)throw new Error('The application workspace could not be identified.');const path=`/admin/applications/${encodeURIComponent(tenantId)}/${encodeURIComponent(application.application_id)}/${encodeURIComponent(application.environment)}/observation-credential`;const r=await apiFetch(path,{method:'POST',headers:{Authorization:`Bearer ${adminToken}`}});if(!r.ok)throw new Error(await responseError(r,'Could not rotate observation credential'));return r.json()}
+export async function getIntegrationMethods(){const r=await apiFetch('/integration-methods');if(r.status===404)throw new Error('The configured API does not provide GET /api/v1/integration-methods. Confirm VITE_API_BASE_URL points to the intended RAGGuard API and deploy the current backend.');if(!r.ok)throw new Error(await responseError(r,'Integration methods unavailable'));return r.json()}
+export async function prepareApplicationIntegration(payload:{application_name:string;framework:string;environment:string;knowledge_source:string;integration_method?:string}){const r=await apiFetch('/application-integration',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(r.status===404)throw new Error('The configured API does not provide POST /api/v1/application-integration. Confirm VITE_API_BASE_URL points to the intended RAGGuard API and deploy the current backend.');if(!r.ok)throw new Error(await responseError(r,'Could not prepare integration plan'));return r.json()}
 export async function getRecycleBin(){const r=await apiFetch('/documents/recycle-bin');if(!r.ok)throw new Error('Recycle bin unavailable');return r.json()}
 export async function addDocument(name:string,text:string){const r=await apiFetch('/documents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,text})});if(!r.ok)throw new Error('Could not add document');return r.json()}
 export async function deleteDocument(id:string){const r=await apiFetch(`/documents/${encodeURIComponent(id)}`,{method:'DELETE'});if(!r.ok){const detail=await r.json().catch(()=>null);throw new Error(detail?.detail||'Could not delete document')}return r.json()}

@@ -25,7 +25,8 @@ class FakeCursor:
                 else:
                     self.connection.rows[key] = (
                         parameters[0], parameters[1], parameters[1], parameters[3],
-                        "managed_index", parameters[4], None, None, None, True, False,
+                        "managed_index", parameters[4], None, None, None, None,
+                        None, None, True, False, False, False,
                     )
                     self.fetchone_result = (parameters[1],)
             else:
@@ -38,11 +39,11 @@ class FakeCursor:
                 application_id = parameters[1]
                 environment = parameters[2]
                 row = self.connection.rows.get((tenant_id, application_id, environment))
-                self.fetchone_result = row if row and ("AND active" not in query or row[9]) else None
+                self.fetchone_result = row if row and ("AND active" not in query or row[12]) else None
             else:
                 self.fetchall_result = [
                     row for key, row in self.connection.rows.items()
-                    if key[0] == tenant_id and ("AND active" not in query or row[9])
+                    if key[0] == tenant_id and ("AND active" not in query or row[12])
                 ]
 
     def fetchone(self):
@@ -80,7 +81,10 @@ def test_postgres_application_repository_upsert_scope_and_bootstrap():
         knowledge_source="external_rag_api",
         query_endpoint_url="https://support.example.test/query",
         query_token_env_var="SUPPORTBOT_QUERY_TOKEN",
+        repair_endpoint_url="https://support.example.test/repair",
+        repair_token_env_var="SUPPORTBOT_REPAIR_TOKEN",
         observation_token_env_var="SUPPORTBOT_OBSERVATION_TOKEN",
+        observation_token_hash="credential-hash",
         repair_authorized=True,
     )
 
@@ -89,6 +93,8 @@ def test_postgres_application_repository_upsert_scope_and_bootstrap():
     assert repository.get("tenant-a", "supportbot", "production") == application
     assert application.repair_authorized is True
     assert repository.get("tenant-a", "supportbot", "production").vector_namespace is None
+    assert repository.get("tenant-a", "supportbot", "production").observation_token_hash == "credential-hash"
+    assert repository.get("tenant-a", "supportbot", "production").repair_token_env_var == "SUPPORTBOT_REPAIR_TOKEN"
     assert repository.list("tenant-a") == [application]
     assert repository.list("tenant-b") == []
     assert "SUPPORTBOT_QUERY_TOKEN" in connection.queries[0][1]

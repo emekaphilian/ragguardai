@@ -14,6 +14,7 @@ from ragguard.agents.validation_agent import (
     validation_node,
 )
 from ragguard.config import MAX_REPAIR_ATTEMPTS, load_settings
+from ragguard.common.schemas import ValidationResult
 from ragguard.repair.repair_policy import (
     EXECUTABLE_REPAIRS,
     choose_executable_repair,
@@ -192,7 +193,18 @@ def build_langgraph(
                 RecoveryEventType.DIAGNOSIS_COMPLETED,
                 status="diagnosed",
                 reason=str(root_cause) if root_cause is not None else None,
-                metadata={"confidence": getattr(state.diagnosis, "confidence", None)},
+                metadata={
+                    "confidence": getattr(state.diagnosis, "confidence", None),
+                    "evidence": list(
+                        getattr(state.diagnosis, "evidence", []) or []
+                    ),
+                    "recommended_repairs": [
+                        getattr(repair, "value", repair)
+                        for repair in (
+                            getattr(state.diagnosis, "recommended_repairs", []) or []
+                        )
+                    ],
+                },
             )
         return result(state, "diagnose")
 
@@ -238,15 +250,40 @@ def build_langgraph(
                 strategy=str(strategy) if strategy is not None else None,
                 status="started",
             )
-        repair_node(
-            state,
-            repair_engine,
-            store,
-            evaluator,
-            relevant_ids,
-            answer,
-            available_repairs,
-        )
+        state.repair_result = None
+        try:
+            repair_node(
+                state,
+                repair_engine,
+                store,
+                evaluator,
+                relevant_ids,
+                answer,
+                available_repairs,
+            )
+        except Exception as exc:
+            attempt = {
+                "strategy": str(strategy),
+                "status": "failed",
+                "improvement": None,
+            }
+            state.repair_attempts.append(attempt)
+            state.status = "escalated"
+            state.escalation_reason = (
+                f"Repair execution failed ({type(exc).__name__})."
+            )
+            if state.recovery_audit is not None:
+                state.recovery_audit.attempts.append(attempt.copy())
+                record_event(
+                    state,
+                    RecoveryEventType.REPAIR_COMPLETED,
+                    attempt=attempt_number,
+                    strategy=str(strategy),
+                    status="failed",
+                    reason=state.escalation_reason,
+                    metadata={"error_type": type(exc).__name__},
+                )
+            return result(state, "repair")
         if state.repair_result is None:
             raise RuntimeError("Repair engine did not return a repair result.")
         state.repair_attempts.append({
@@ -289,7 +326,18 @@ def build_langgraph(
         return result(state, "re_evaluate")
 
     def validate(values):
-        state = validation_node(state_from(values), repair_engine)
+        state = state_from(values)
+        validation_error_type = None
+        try:
+            state = validation_node(state, repair_engine)
+        except Exception as exc:
+            validation_error_type = type(exc).__name__
+            state.validation_result = ValidationResult(
+                valid=False,
+                improved=False,
+                score_delta=0.0,
+                message=f"Validation failed ({validation_error_type}).",
+            )
         if state.recovery_audit is not None:
             repair = state.repair_result
             validation = state.validation_result
@@ -298,7 +346,17 @@ def build_langgraph(
                 RecoveryEventType.VALIDATION_COMPLETED,
                 attempt=len(state.attempted_repairs),
                 strategy=getattr(getattr(repair, "repair_type", None), "value", None),
-                status="validated",
+                status=(
+                    "validated"
+                    if state.validation_result is not None
+                    and state.validation_result.valid
+                    else "failed"
+                ),
+                reason=(
+                    state.validation_result.message
+                    if validation_error_type is not None
+                    else None
+                ),
                 before_score=getattr(getattr(repair, "before_metrics", None), "overall_score", None),
                 after_score=getattr(getattr(repair, "after_metrics", None), "overall_score", None),
                 improvement=getattr(repair, "improvement", None),
@@ -307,6 +365,7 @@ def build_langgraph(
                 metadata={
                     "before_retrieval": getattr(repair, "before_retrieval_stats", {}),
                     "after_retrieval": getattr(repair, "after_retrieval_stats", {}),
+                    "error_type": validation_error_type,
                 },
             )
         return result(state, "validate")
@@ -410,7 +469,15 @@ def build_langgraph(
         lambda values: "repair" if state_from(values).repair_plan else "escalate",
         {"repair": "repair", "escalate": "escalate"},
     )
-    graph.add_edge("repair", "re_evaluate")
+    graph.add_conditional_edges(
+        "repair",
+        lambda values: (
+            "re_evaluate"
+            if state_from(values).repair_result is not None
+            else "escalate"
+        ),
+        {"re_evaluate": "re_evaluate", "escalate": "escalate"},
+    )
     graph.add_edge("re_evaluate", "validate")
     graph.add_conditional_edges(
         "validate",

@@ -161,6 +161,7 @@ def test_dashboard_runs_and_failures_include_tenant_scoped_observations(monkeypa
     }
     assert dashboard["metrics"]["total_runs"] == 8
     assert dashboard["metrics"]["observation_runs"] == 7
+    assert dashboard["metrics"]["total_runs"] - dashboard["metrics"]["observation_runs"] == 1
     assert dashboard["metrics"]["observation_failures"] == 5
     assert dashboard["metrics"]["observed_reliability_event_rate"] == 0.714
     assert dashboard["metrics"]["total_failures"] == 5
@@ -168,11 +169,14 @@ def test_dashboard_runs_and_failures_include_tenant_scoped_observations(monkeypa
         "failure-a",
         *(f"failure-{index}" for index in range(2, 6)),
     }
-    assert {item["id"] for item in dashboard["recent_runs"]} == {
+    dashboard_runs = {item["id"]: item for item in dashboard["recent_runs"]}
+    assert set(dashboard_runs) == {
         "visible-observation",
         *(f"visible-observation-{index}" for index in range(2, 8)),
         "local-run",
     }
+    assert dashboard_runs["local-run"]["source"] == "workspace"
+    assert dashboard_runs["visible-observation"]["source"] == "observation"
 
     assert failures_response.status_code == 200
     failures = failures_response.json()

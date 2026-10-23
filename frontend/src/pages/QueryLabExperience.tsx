@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getApplications, getDashboard, runQuery, runRepair, type RegisteredApplication } from '../api/client'
 import { MetricCard, Section } from '../components/Cards'
+import type { CapabilityExecution } from '../types/capability'
 import '../styles/query-lab.css'
 
 const refreshScope = getDashboard
@@ -36,6 +37,7 @@ type QueryResult = {
     evidence: string[]
   } | null
   sources: Source[]
+  capability_execution?: CapabilityExecution | null
 }
 
 type Scope = {
@@ -65,6 +67,37 @@ function recommendation(failureType: string) {
 
 function repairStatus(status: string) {
   return status.replace(/_/g, ' ')
+}
+
+function capabilityLabel(value: string) {
+  return value.replace(/_/g, ' ')
+}
+
+function capabilityTone(authorization: string) {
+  if (authorization === 'authorized') return 'passed'
+  if (authorization === 'not_authorized') return 'failed'
+  return 'query-neutral'
+}
+
+function CapabilityState({
+  label,
+  state,
+}: {
+  label: string
+  state: CapabilityExecution['context_verification']
+}) {
+  return (
+    <div className={`capability-state ${capabilityTone(state.authorization)}`}>
+      <div className="capability-state-heading">
+        <strong>{label}</strong>
+        <span>{capabilityLabel(state.authorization)}</span>
+      </div>
+      <small>
+        {state.performed ? 'Performed' : 'Not performed'}
+        {state.reason ? ` · ${capabilityLabel(state.reason)}` : ''}
+      </small>
+    </div>
+  )
 }
 
 export default function QueryLabExperience() {
@@ -108,6 +141,7 @@ export default function QueryLabExperience() {
           if (initial) {
             setApplicationId(initial.application_id)
             setEnvironment(initial.environment)
+            if (initial.knowledge_source === 'external_rag_api') setMethod('hybrid')
           } else if (registeredApplications.length) {
             setApplicationError('Registered applications are available, but none can be queried from Query Lab.')
           }
@@ -126,7 +160,7 @@ export default function QueryLabExperience() {
     setRepairCheck(null)
     setSelectedRelevant([])
     try {
-      setResult(await runQuery(query.trim(), topK, method, false, applicationId, environment))
+      setResult(await runQuery(query.trim(), topK, method, true, applicationId, environment))
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Query test failed')
     } finally {
@@ -154,7 +188,7 @@ export default function QueryLabExperience() {
       const response = await runRepair(query.trim(), before.answer, relevantChunkIds, topK, applicationId, environment)
       setRepairCheck({ response, before, after: null })
       try {
-        const after = await runQuery(query.trim(), topK, method, false, applicationId, environment)
+        const after = await runQuery(query.trim(), topK, method, true, applicationId, environment)
         setResult(after)
         setRepairCheck({ response, before, after })
         setSelectedRelevant([])
@@ -186,6 +220,7 @@ export default function QueryLabExperience() {
   const canAttemptRepair = Boolean(
     failure
     && selectedApplication?.knowledge_source === 'managed_index'
+    && selectedApplication?.repair_authorized
     && relevantChunkIds.length
     && !repairBusy,
   )
@@ -201,6 +236,7 @@ export default function QueryLabExperience() {
             const next = applications.find((application) => application.application_id === event.target.value)
             setApplicationId(event.target.value)
             setEnvironment(next?.environment || '')
+            if (next?.knowledge_source === 'external_rag_api') setMethod('hybrid')
             setResult(null)
             setRepairCheck(null)
           }}>
@@ -237,7 +273,7 @@ export default function QueryLabExperience() {
         placeholder={`Ask a question against ${selectedApplication?.display_name || 'the selected application'}`}
       />
       <div className="controls query-lab-controls">
-        <label>Retrieval method<select value={method} onChange={(event) => setMethod(event.target.value)}>
+        <label>Retrieval method<select value={selectedApplication?.knowledge_source === 'external_rag_api' ? 'hybrid' : method} disabled={selectedApplication?.knowledge_source === 'external_rag_api'} onChange={(event) => setMethod(event.target.value)}>
           <option value="hybrid">Hybrid</option><option value="vector">Vector</option><option value="keyword">Keyword</option>
         </select></label>
         <label>Top K<select value={topK} onChange={(event) => setTopK(Number(event.target.value))}>
@@ -283,6 +319,26 @@ export default function QueryLabExperience() {
         </div>}
       </Section>
 
+      {result.capability_execution && <Section title="Capability execution">
+        <p className="operations-note">
+          These states describe what RAGGuard was authorized and actually able to perform for this query.
+        </p>
+        <div className="capability-grid">
+          <CapabilityState
+            label="Context verification"
+            state={result.capability_execution.context_verification}
+          />
+          <CapabilityState
+            label="Independent verification"
+            state={result.capability_execution.independent_verification}
+          />
+          <CapabilityState
+            label="Repair"
+            state={result.capability_execution.repair}
+          />
+        </div>
+      </Section>}
+
       <div className="grid two">
         <Section title="Answer">
           <p className="answer">{result.answer}</p>
@@ -315,7 +371,8 @@ export default function QueryLabExperience() {
       </Section>
 
       {failure && selectedApplication?.knowledge_source === 'managed_index' && <Section title="Recovery test">
-        <p className="operations-note">Recovery is opt-in and requires ground-truth evidence. Select known-relevant retrieved chunks above, or enter chunk IDs independently labeled as relevant (comma or newline separated).</p>
+        <p className="operations-note">Recovery requires repair authorization and ground-truth evidence. Select known-relevant retrieved chunks above, or enter chunk IDs independently labeled as relevant (comma or newline separated).</p>
+        {!selectedApplication?.repair_authorized && <p className="recovery-error" role="status">Repair testing is disabled because this application has not authorized RAGGuard to execute repairs.</p>}
         <label className="query-prompt-label" htmlFor="query-lab-relevant-ids">Ground-truth chunk IDs</label>
         <textarea
           id="query-lab-relevant-ids"

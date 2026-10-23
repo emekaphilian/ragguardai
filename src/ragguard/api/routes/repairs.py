@@ -1,6 +1,7 @@
 from dataclasses import replace
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 
 from ragguard.agents.graph import run_sequential
 from ragguard.agents.state import RAGGuardState
@@ -16,6 +17,7 @@ from ragguard.diagnosis.diagnostic_agent import diagnose
 from ragguard.evaluation.evaluator import Evaluator
 from ragguard.repair.repair_engine import RepairEngine
 from ragguard.common.enums import RepairType
+from ragguard.common.capabilities import capability_execution, capability_state
 from ragguard.repair.repair_policy import EXECUTABLE_REPAIRS
 
 router = APIRouter()
@@ -73,8 +75,69 @@ def repair(request: RepairRequest, context: TenantContext = Depends(tenant_conte
     )
     if application is None:
         raise HTTPException(status_code=404, detail="Application is not registered for this RAGGuard tenant and environment.")
+    if not application.repair_authorized:
+        capability_results = capability_execution(
+            context_verification=(
+                capability_state(
+                    "authorized",
+                    performed=False,
+                    reason="repair_not_started",
+                )
+                if application.context_verification_authorized
+                else capability_state(
+                    "not_authorized",
+                    performed=False,
+                    reason="application_not_authorized",
+                )
+            ),
+            independent_verification=capability_state(
+                "not_applicable",
+                performed=False,
+                reason="managed_index",
+            ),
+            repair=capability_state(
+                "not_authorized",
+                performed=False,
+                reason="application_not_authorized",
+            ),
+        )
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": "This application has not authorized RAGGuard to execute a repair.",
+                "capability_execution": capability_results,
+            },
+        )
     if application.knowledge_source != "managed_index":
         raise HTTPException(status_code=409, detail="Repair testing is only available for RAGGuard-managed indexes.")
+    if not application.context_verification_authorized:
+        capability_results = capability_execution(
+            context_verification=capability_state(
+                "not_authorized",
+                performed=False,
+                reason="application_not_authorized",
+            ),
+            independent_verification=capability_state(
+                "not_applicable",
+                performed=False,
+                reason="managed_index",
+            ),
+            repair=capability_state(
+                "authorized",
+                performed=False,
+                reason="context_verification_not_authorized",
+            ),
+        )
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": (
+                    "RAGGuard is not authorized to inspect context required to "
+                    "validate a repair."
+                ),
+                "capability_execution": capability_results,
+            },
+        )
     application_context = replace(
         context,
         application_id=application.application_id,
@@ -99,6 +162,23 @@ def repair(request: RepairRequest, context: TenantContext = Depends(tenant_conte
         state, FailureDetector(settings.thresholds), diagnose,
         RepairEngine(), workspace.store, evaluator, relevant_ids, request.answer,
         max_repair_attempts=max_repair_attempts,
+    )
+
+    capability_results = capability_execution(
+        context_verification=capability_state(
+            "authorized",
+            performed=True,
+        ),
+        independent_verification=capability_state(
+            "not_applicable",
+            performed=False,
+            reason="managed_index",
+        ),
+        repair=capability_state(
+            "authorized",
+            performed=bool(state.attempted_repairs),
+            reason=(None if state.attempted_repairs else "no_repair_attempted"),
+        ),
     )
 
     result = state.repair_result
@@ -134,6 +214,7 @@ def repair(request: RepairRequest, context: TenantContext = Depends(tenant_conte
         "tenant_id": application_context.tenant_id,
         "application_id": application.application_id,
         "environment": application.environment,
+        "capability_execution": capability_results,
     }
     workspace.repairs.insert(0, repair)
     return repair

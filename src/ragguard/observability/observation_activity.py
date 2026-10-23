@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -20,6 +20,7 @@ class ObservationRecord:
     observation: dict[str, Any]
     failure: dict[str, Any] | None
     recovery: dict[str, Any] | None
+    capability_execution: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @classmethod
     def create(
@@ -33,6 +34,7 @@ class ObservationRecord:
         observation: dict[str, Any],
         failure: dict[str, Any] | None,
         recovery: dict[str, Any] | None,
+        capability_execution: dict[str, dict[str, Any]] | None = None,
     ) -> ObservationRecord:
         return cls(
             observation_id=str(uuid4()),
@@ -45,4 +47,5 @@ class ObservationRecord:
             observation=observation,
             failure=failure,
             recovery=recovery,
+            capability_execution=capability_execution or {},
         )

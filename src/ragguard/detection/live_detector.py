@@ -19,12 +19,73 @@ class LiveFailureDetector:
         signals = evaluation.signals
 
         if signals["no_retrieval"]:
+            outcome = evaluation.retrieval_outcome
+            evidence = {
+                "not_attempted": "Retrieval was required but was not attempted.",
+                "no_results": "Retrieval was attempted but returned no chunks.",
+                "unknown": "No chunks were reported for a request that required retrieval.",
+            }.get(outcome, "No chunks were retrieved.")
             return self._event(
                 observation,
                 evaluation,
                 FailureMode.NO_RETRIEVAL,
                 Severity.HIGH,
-                ["No chunks were retrieved."],
+                [evidence],
+            )
+
+        if signals["infrastructure_failed"]:
+            return self._event(
+                observation,
+                evaluation,
+                FailureMode.INFRASTRUCTURE_FAILURE,
+                Severity.HIGH,
+                [
+                    f"An infrastructure failure was reported at "
+                    f"{observation.failed_stage}."
+                ],
+            )
+
+        if signals["retrieval_failed"] and not signals["no_retrieval"]:
+            evidence = ["The source application reported a retrieval-stage failure."]
+            if observation.error_code:
+                evidence.append(f"error_code={observation.error_code}")
+            return self._event(
+                observation,
+                evaluation,
+                FailureMode.RETRIEVAL_FAILURE,
+                Severity.HIGH,
+                evidence,
+            )
+
+        if signals["generation_failed"]:
+            return self._event(
+                observation,
+                evaluation,
+                FailureMode.GENERATION_FAILURE,
+                Severity.HIGH,
+                ["The source application reported generation failure."],
+            )
+
+        if signals["evidence_insufficient"]:
+            return self._event(
+                observation,
+                evaluation,
+                FailureMode.INSUFFICIENT_EVIDENCE,
+                Severity.MEDIUM,
+                ["The source application marked retrieved evidence insufficient."],
+            )
+
+        if signals["latency_anomaly"]:
+            return self._event(
+                observation,
+                evaluation,
+                FailureMode.LATENCY_ANOMALY,
+                Severity.MEDIUM,
+                [
+                    f"{evaluation.slow_stage} latency="
+                    f"{evaluation.slow_stage_latency_ms:.1f}ms exceeded its "
+                    "configured threshold."
+                ],
             )
 
         if signals["duplicate_context"]:
@@ -79,6 +140,15 @@ class LiveFailureDetector:
             metadata={
                 **observation.metadata,
                 "contract_version": observation.contract_version,
-                "source": observation.source.model_dump(),
+                "source": observation.source.model_dump(exclude_none=True),
+                "request_id": observation.request_id,
+                "retrieval_required": observation.retrieval_required,
+                "retrieval_attempted": observation.retrieval_attempted,
+                "retrieval_outcome": evaluation.retrieval_outcome,
+                "stage_timings_ms": observation.stage_timings_ms,
+                "evidence_sufficient": observation.evidence_sufficient,
+                "generation_status": observation.generation_status,
+                "failed_stage": observation.failed_stage,
+                "error_code": observation.error_code,
             },
         )

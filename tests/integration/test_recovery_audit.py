@@ -113,6 +113,7 @@ def test_observation_recovery_is_persisted_and_retrievable(monkeypatch):
         knowledge_source="managed_index",
         vector_namespace="development",
         repair_authorized=True,
+        context_verification_authorized=True,
     ))
     settings = Settings(
         tenant_policies=(

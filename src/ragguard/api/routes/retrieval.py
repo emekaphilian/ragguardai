@@ -1,11 +1,13 @@
 from dataclasses import replace
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import JSONResponse
 from ragguard.auth.tenant_context import TenantContext
 from ragguard.api.middleware import tenant_context
 from ragguard.api.schemas import DocumentRequest, QueryRequest, QueryResponse
 from ragguard.api.external_query import query_external_application
 from ragguard.api.runtime import application_repository, workspace
+from ragguard.common.capabilities import capability_execution, capability_state
 from ragguard.ingestion.file_extractors import UnsupportedDocumentType, extract_text
 
 router = APIRouter()
@@ -34,6 +36,50 @@ def query(request: QueryRequest, context: TenantContext = Depends(tenant_context
         )
 
     if application.knowledge_source == "external_rag_api":
+        if not application.independent_verification_authorized:
+            capability_results = capability_execution(
+                context_verification=(
+                    capability_state(
+                        "authorized",
+                        performed=False,
+                        reason="source_query_not_performed",
+                    )
+                    if application.context_verification_authorized
+                    else capability_state(
+                        "not_authorized",
+                        performed=False,
+                        reason="application_not_authorized",
+                    )
+                ),
+                independent_verification=capability_state(
+                    "not_authorized",
+                    performed=False,
+                    reason="application_not_authorized",
+                ),
+                repair=(
+                    capability_state(
+                        "authorized",
+                        performed=False,
+                        reason="query_operation",
+                    )
+                    if application.repair_authorized
+                    else capability_state(
+                        "not_authorized",
+                        performed=False,
+                        reason="application_not_authorized",
+                    )
+                ),
+            )
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "detail": (
+                        "RAGGuard is not authorized to independently query this "
+                        "application's source."
+                    ),
+                    "capability_execution": capability_results,
+                },
+            )
         return QueryResponse(
             **query_external_application(
                 application,

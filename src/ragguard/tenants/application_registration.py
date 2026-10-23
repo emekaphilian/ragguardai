@@ -14,10 +14,15 @@ class ApplicationRegistration:
     environment: str
     knowledge_source: KnowledgeSource
     repair_authorized: bool = False
+    context_verification_authorized: bool = False
+    independent_verification_authorized: bool = False
     vector_namespace: str | None = None
     query_endpoint_url: str | None = None
     query_token_env_var: str | None = None
+    repair_endpoint_url: str | None = None
+    repair_token_env_var: str | None = None
     observation_token_env_var: str | None = None
+    observation_token_hash: str | None = None
     active: bool = True
 
     @property
@@ -36,5 +41,10 @@ class ApplicationRegistration:
             "knowledge_source": self.knowledge_source,
             "active": self.active,
             "queryable": self.queryable,
-            "observation_enabled": bool(self.observation_token_env_var),
+            "observation_enabled": bool(
+                self.observation_token_env_var or self.observation_token_hash
+            ),
+            "context_verification_authorized": self.context_verification_authorized,
+            "independent_verification_authorized": self.independent_verification_authorized,
+            "repair_authorized": self.repair_authorized,
         }

@@ -74,6 +74,23 @@ def make_record():
         observation={"contract_version": "v1", "query": "refund policy"},
         failure=None,
         recovery=None,
+        capability_execution={
+            "context_verification": {
+                "authorization": "authorized",
+                "performed": True,
+                "reason": None,
+            },
+            "independent_verification": {
+                "authorization": "not_applicable",
+                "performed": False,
+                "reason": "managed_index",
+            },
+            "repair": {
+                "authorization": "not_authorized",
+                "performed": False,
+                "reason": "application_not_authorized",
+            },
+        },
     )
 
 

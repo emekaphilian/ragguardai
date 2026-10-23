@@ -10,6 +10,8 @@ import httpx
 from fastapi import HTTPException
 
 from ragguard.api.schemas import ExternalRAGQueryResponse
+from ragguard.common.capabilities import capability_execution, capability_state
+from ragguard.config import load_settings
 from ragguard.detection.live_detector import LiveFailureDetector
 from ragguard.evaluation.live import ObservationSource, RAGObservation, RetrievedChunkObservation
 from ragguard.evaluation.live_evaluator import LiveEvaluator
@@ -97,32 +99,82 @@ def query_external_application(
             environment=application.environment,
         ),
         query=query,
+        request_id=adapter_result.request_id,
         retrieved_chunks=[
             RetrievedChunkObservation(id=chunk.id, score=chunk.score)
             for chunk in adapter_result.retrieved_chunks
         ],
         retrieval_method=adapter_result.retrieval_method,
+        retrieval_required=True,
+        retrieval_attempted=True,
         embedding_degraded=adapter_result.embedding_degraded,
         retrieval_latency_ms=adapter_result.retrieval_latency_ms,
+        stage_timings_ms=adapter_result.stage_timings_ms,
+        evidence_sufficient=adapter_result.evidence_sufficient,
+        generation_status=adapter_result.generation_status,
+        failed_stage=adapter_result.failed_stage,
+        error_code=adapter_result.error_code,
         answer=adapter_result.answer,
     )
-    evaluation = LiveEvaluator().evaluate(observation)
+    evaluation = LiveEvaluator(
+        latency_thresholds_ms=load_settings().live_latency_thresholds_ms,
+    ).evaluate(observation)
     failure = LiveFailureDetector().detect(observation, evaluation)
-    texts = [chunk.text for chunk in adapter_result.retrieved_chunks if chunk.text]
-    context = " ".join(texts)
-    answer_terms = [term for term in adapter_result.answer.lower().split() if len(term) > 3]
+    faithfulness = None
+    context_verification_performed = False
+    context_verification_reason = None
+    if application.context_verification_authorized:
+        texts = [chunk.text for chunk in adapter_result.retrieved_chunks if chunk.text]
+        context = " ".join(texts)
+        answer_terms = [
+            term for term in adapter_result.answer.lower().split() if len(term) > 3
+        ]
+        if texts and adapter_result.answer:
+            context_verification_performed = True
+            faithfulness = (
+                sum(term in context.lower() for term in answer_terms)
+                / max(1, len(answer_terms))
+            )
+        elif not texts:
+            context_verification_reason = "no_context_available"
+        else:
+            context_verification_reason = "no_answer_available"
     quality = {
         "term_match": fmean(chunk.score for chunk in adapter_result.retrieved_chunks)
         if adapter_result.retrieved_chunks
         else 0.0,
         "source_coverage": None,
         "answer_relevancy": answer_relevancy(query, adapter_result.answer),
-        "faithfulness": (
-            sum(term in context.lower() for term in answer_terms) / max(1, len(answer_terms))
-            if texts and adapter_result.answer
-            else None
-        ),
+        "faithfulness": faithfulness,
     }
+    capability_results = capability_execution(
+        context_verification=(
+            capability_state(
+                "authorized",
+                performed=context_verification_performed,
+                reason=context_verification_reason,
+            )
+            if application.context_verification_authorized
+            else capability_state(
+                "not_authorized",
+                performed=False,
+                reason="application_not_authorized",
+            )
+        ),
+        independent_verification=capability_state(
+            "authorized",
+            performed=True,
+        ),
+        repair=(
+            capability_state("authorized", performed=False, reason="query_operation")
+            if application.repair_authorized
+            else capability_state(
+                "not_authorized",
+                performed=False,
+                reason="application_not_authorized",
+            )
+        ),
+    )
     return {
         "answer": adapter_result.answer,
         "rag_status": "retrieved" if adapter_result.retrieved_chunks else "no_match",
@@ -145,4 +197,5 @@ def query_external_application(
         "application_id": application.application_id,
         "environment": application.environment,
         "knowledge_source": application.knowledge_source,
+        "capability_execution": capability_results,
     }

@@ -30,6 +30,7 @@ def observation_client(monkeypatch):
         knowledge_source="managed_index",
         vector_namespace="development",
         repair_authorized=True,
+        context_verification_authorized=True,
     ))
     settings = Settings(
         tenant_policies=(
@@ -222,6 +223,9 @@ def test_observation_failure_is_repaired_and_promoted(
     assert body["recovery"]["repair_capability"] == "available"
     assert body["recovery"]["repair_authorization"] == "authorized"
     assert body["recovery"]["repair_attempted"] is True
+    assert body["recovery"]["repair_supported"] is True
+    assert body["recovery"]["repair_eligible"] is True
+    assert body["recovery"]["repair_validated"] is True
     assert body["status"] == "promoted"
     assert body["recovery"]["attempts"][-1]["strategy"] == "DEDUPLICATE"
     assert body["recovery"]["attempts"][-1]["status"] == "promoted"
@@ -238,6 +242,12 @@ def test_observation_failure_is_repaired_and_promoted(
     assert audit.repair_attempted is True
     assert audit.tenant_id is None
     assert audit.ragguard_tenant_id == "development"
+    assert audit.capability_execution == body["capability_execution"]
+    persisted_audit = observation_client.get(
+        f"/api/v1/recoveries/{body['recovery']['recovery_id']}"
+    )
+    assert persisted_audit.status_code == 200
+    assert persisted_audit.json()["capability_execution"] == body["capability_execution"]
     assert [event.event_type.value for event in audit.events][-2:] == [
         "promoted",
         "run_completed",

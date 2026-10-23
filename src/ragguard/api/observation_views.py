@@ -24,6 +24,7 @@ def observation_run(record: ObservationRecord) -> dict:
         "embedding_degraded": observation.get("embedding_degraded", False),
         "failure_type": failure.get("failure_type"),
         "recovery_status": recovery.get("status"),
+        "capability_execution": record.capability_execution,
     }
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from hashlib import sha256
 from dataclasses import dataclass, replace
 from hmac import compare_digest
 
@@ -58,13 +59,24 @@ def authenticate_service(
         )
 
     if application_repository is not None and application_id and environment:
+        supplied_token_hash = sha256(token.encode("utf-8")).hexdigest()
         for registration in application_repository.find_for_observation(
             application_id,
             environment,
         ):
             token_env_var = registration.observation_token_env_var
             registered_token = os.getenv(token_env_var) if token_env_var else None
-            if not registered_token or not compare_digest(token, registered_token):
+            env_token_matches = bool(
+                registered_token and compare_digest(token, registered_token)
+            )
+            hash_token_matches = bool(
+                registration.observation_token_hash
+                and compare_digest(
+                    supplied_token_hash,
+                    registration.observation_token_hash,
+                )
+            )
+            if not (env_token_matches or hash_token_matches):
                 continue
             tenant_context = TenantService(settings).resolve(
                 registration.ragguard_tenant_id,

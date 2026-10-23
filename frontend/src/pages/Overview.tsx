@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import NarratorPanel from '../components/NarratorPanel'
 import { MetricCard, Section } from '../components/Cards'
 import { getDashboard } from '../api/client'
+import { selectWorkspaceActivity } from './workspaceActivity.js'
 
 const REFRESH_MS = 4000
 const percent = (value: unknown) => typeof value === 'number' ? `${Math.round(value * 100)}%` : '—'
@@ -41,9 +42,7 @@ export default function Overview() {
     && run.application_id === data.scope?.application_id
     && run.environment === data.scope?.environment
   ))
-  const workspaceActivity = recentRuns.filter((run: any) => (
-    run.source !== 'observation' && run.application_id !== data.scope?.application_id
-  ))
+  const workspaceActivity = selectWorkspaceActivity(recentRuns)
   const observedFailures = (data.recent_failures || []).filter((failure: any) => (
     failure.tenant_id === data.scope?.ragguard_tenant_id
     && failure.application_id === data.scope?.application_id

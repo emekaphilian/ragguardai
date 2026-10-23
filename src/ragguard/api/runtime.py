@@ -15,6 +15,7 @@ from time import perf_counter
 from uuid import uuid4
 
 from ragguard.common.schemas import Document
+from ragguard.common.capabilities import capability_execution, capability_state
 from ragguard.auth.tenant_context import TenantContext
 from ragguard.ingestion.document_processor import process_document
 from ragguard.ingestion.loaders import load_directory
@@ -223,8 +224,12 @@ class Workspace:
         record_run: bool = True,
     ) -> dict:
         started = perf_counter()
+        retrieval_started = perf_counter()
         retrieval = retrieve(self.store, query, method=method, top_k=top_k, context=context)
+        retrieval_latency_ms = round((perf_counter() - retrieval_started) * 1000, 2)
+        generation_started = perf_counter()
         answer = self._answer(query, retrieval.documents)
+        generation_latency_ms = round((perf_counter() - generation_started) * 1000, 2)
         latency_ms = round((perf_counter() - started) * 1000, 2)
         # This is a lexical query-term match proxy, not a labeled quality score.
         score = sum(retrieval.scores) / len(retrieval.scores) if retrieval.scores else 0.0
@@ -241,31 +246,119 @@ class Workspace:
                 for chunk, score in zip(retrieval.documents, retrieval.scores)
             ],
             retrieval_method=retrieval.retrieval_method.value,
+            retrieval_required=True,
+            retrieval_attempted=True,
             embedding_degraded=False,
-            retrieval_latency_ms=latency_ms,
+            retrieval_latency_ms=retrieval_latency_ms,
+            stage_timings_ms={
+                "retrieval": retrieval_latency_ms,
+                "generation": generation_latency_ms,
+            },
+            generation_status="succeeded",
             answer=answer,
         )
-        reliability_evaluation = LiveEvaluator().evaluate(observation)
+        reliability_evaluation = LiveEvaluator(
+            latency_thresholds_ms=load_settings().live_latency_thresholds_ms,
+        ).evaluate(observation)
         reliability_failure = LiveFailureDetector().detect(
             observation,
             reliability_evaluation,
+        )
+        registration = (
+            application_repository.get(
+                context.tenant_id,
+                context.application_id,
+                context.environment,
+            )
+            if context is not None
+            else None
+        )
+        context_verification_authorized = bool(
+            registration and registration.context_verification_authorized
+        )
+        if context_verification_authorized:
+            context_reason = (
+                "no_context_available"
+                if not retrieval.documents
+                else "no_answer_available"
+                if not answer
+                else None
+            )
+            context_state = capability_state(
+                "authorized",
+                performed=bool(retrieval.documents and answer),
+                reason=context_reason,
+            )
+        elif registration is None:
+            context_state = capability_state(
+                "not_applicable",
+                performed=False,
+                reason="application_not_registered",
+            )
+        else:
+            context_state = capability_state(
+                "not_authorized",
+                performed=False,
+                reason="application_not_authorized",
+            )
+        repair_state = (
+            capability_state(
+                "authorized",
+                performed=False,
+                reason="query_operation",
+            )
+            if registration and registration.repair_authorized
+            else capability_state(
+                "not_authorized",
+                performed=False,
+                reason="application_not_authorized",
+            )
+            if registration
+            else capability_state(
+                "not_applicable",
+                performed=False,
+                reason="application_not_registered",
+            )
+        )
+        capability_results = capability_execution(
+            context_verification=context_state,
+            independent_verification=capability_state(
+                "not_applicable",
+                performed=False,
+                reason="managed_index",
+            ),
+            repair=repair_state,
         )
         source_coverage = 1.0 if status == "grounded" else 0.0
         quality = {
             "term_match": round(min(1.0, score), 3),
             "source_coverage": source_coverage,
             "answer_relevancy": round(answer_relevancy(query, answer), 3),
-            "faithfulness": round(faithfulness(answer, retrieval), 3),
+            "faithfulness": (
+                round(faithfulness(answer, retrieval), 3)
+                if context_state["performed"]
+                else None
+            ),
         }
         if status == "no_match":
             answer = "I could not find a sufficiently relevant passage in the indexed documents to answer that question."
             quality["answer_relevancy"] = round(answer_relevancy(query, answer), 3)
-            quality["faithfulness"] = round(faithfulness(answer, retrieval), 3)
-        quality["overall_quality"] = round(sum(quality.values()) / len(quality), 3)
+            if context_state["performed"]:
+                quality["faithfulness"] = round(faithfulness(answer, retrieval), 3)
+        available_quality_scores = [
+            value for value in quality.values()
+            if isinstance(value, (int, float))
+        ]
+        quality["overall_quality"] = (
+            round(sum(available_quality_scores) / len(available_quality_scores), 3)
+            if available_quality_scores
+            else None
+        )
         run = {
             "id": f"run-{uuid4().hex[:8]}", "query": query, "status": status,
             "method": retrieval.retrieval_method.value, "latency_ms": latency_ms,
             "created_at": datetime.now(timezone.utc).isoformat(), "quality": quality,
+            "capability_execution": capability_results,
             "tenant_id": context.tenant_id if context else "development",
             "application_id": context.application_id if context else "ragguard",
             "environment": context.environment if context else "development",
@@ -301,6 +394,7 @@ class Workspace:
             "application_id": observation.source.application_id,
             "environment": observation.source.environment,
             "knowledge_source": "managed_index",
+            "capability_execution": capability_results,
             "run": run,
         }
 
@@ -357,5 +451,3 @@ class Workspace:
 
 
 workspace = Workspace()
-
-

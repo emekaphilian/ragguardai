@@ -34,8 +34,14 @@ class PostgreSQLApplicationRepository(ApplicationRepository):
                         ragguard_tenant_id, application_id, display_name,
                         environment, knowledge_source, vector_namespace,
                         query_endpoint_url, query_token_env_var,
-                        observation_token_env_var, active, repair_authorized
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        repair_endpoint_url, repair_token_env_var,
+                        observation_token_env_var, observation_token_hash,
+                        active, repair_authorized,
+                        context_verification_authorized,
+                        independent_verification_authorized
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
                     ON CONFLICT (ragguard_tenant_id, application_id, environment)
                     DO UPDATE SET
                         display_name = EXCLUDED.display_name,
@@ -43,9 +49,16 @@ class PostgreSQLApplicationRepository(ApplicationRepository):
                         vector_namespace = EXCLUDED.vector_namespace,
                         query_endpoint_url = EXCLUDED.query_endpoint_url,
                         query_token_env_var = EXCLUDED.query_token_env_var,
+                        repair_endpoint_url = EXCLUDED.repair_endpoint_url,
+                        repair_token_env_var = EXCLUDED.repair_token_env_var,
                         observation_token_env_var = EXCLUDED.observation_token_env_var,
+                        observation_token_hash = EXCLUDED.observation_token_hash,
                         active = EXCLUDED.active,
                         repair_authorized = EXCLUDED.repair_authorized,
+                        context_verification_authorized =
+                            EXCLUDED.context_verification_authorized,
+                        independent_verification_authorized =
+                            EXCLUDED.independent_verification_authorized,
                         updated_at = now()
                     """,
                     self._parameters(application),
@@ -103,7 +116,8 @@ class PostgreSQLApplicationRepository(ApplicationRepository):
                 cursor.execute(
                     f"SELECT {self._columns()} FROM registered_applications "
                     "WHERE application_id = %s AND environment = %s "
-                    "AND active AND observation_token_env_var IS NOT NULL",
+                    "AND active AND (observation_token_env_var IS NOT NULL "
+                    "OR observation_token_hash IS NOT NULL)",
                     (application_id, environment),
                 )
                 rows = cursor.fetchall()
@@ -141,8 +155,10 @@ class PostgreSQLApplicationRepository(ApplicationRepository):
         return (
             "ragguard_tenant_id, application_id, display_name, environment, "
             "knowledge_source, vector_namespace, query_endpoint_url, "
-            "query_token_env_var, observation_token_env_var, active, "
-            "repair_authorized"
+            "query_token_env_var, repair_endpoint_url, repair_token_env_var, "
+            "observation_token_env_var, observation_token_hash, active, "
+            "repair_authorized, context_verification_authorized, "
+            "independent_verification_authorized"
         )
 
     @staticmethod
@@ -156,9 +172,14 @@ class PostgreSQLApplicationRepository(ApplicationRepository):
             application.vector_namespace,
             application.query_endpoint_url,
             application.query_token_env_var,
+            application.repair_endpoint_url,
+            application.repair_token_env_var,
             application.observation_token_env_var,
+            application.observation_token_hash,
             application.active,
             application.repair_authorized,
+            application.context_verification_authorized,
+            application.independent_verification_authorized,
         )
 
     @staticmethod
@@ -172,9 +193,14 @@ class PostgreSQLApplicationRepository(ApplicationRepository):
             vector_namespace=row[5],
             query_endpoint_url=row[6],
             query_token_env_var=row[7],
-            observation_token_env_var=row[8],
-            active=row[9],
-            repair_authorized=row[10],
+            repair_endpoint_url=row[8],
+            repair_token_env_var=row[9],
+            observation_token_env_var=row[10],
+            observation_token_hash=row[11],
+            active=row[12],
+            repair_authorized=row[13],
+            context_verification_authorized=row[14],
+            independent_verification_authorized=row[15],
         )
 
 

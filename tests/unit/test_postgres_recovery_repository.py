@@ -121,6 +121,23 @@ def test_postgres_repository_round_trips_repair_authorization_denial():
         repair_attempted=False,
         authorization_source="application_registration",
         authorization_reason=reason,
+        capability_execution={
+            "context_verification": {
+                "authorization": "authorized",
+                "performed": False,
+                "reason": "context_not_supplied",
+            },
+            "independent_verification": {
+                "authorization": "authorized",
+                "performed": False,
+                "reason": "not_requested_by_observation",
+            },
+            "repair": {
+                "authorization": "not_authorized",
+                "performed": False,
+                "reason": "application_not_authorized",
+            },
+        },
     )
     record.add_event(
         RecoveryEventType.REPAIR_NOT_AUTHORIZED,
@@ -140,6 +157,7 @@ def test_postgres_repository_round_trips_repair_authorization_denial():
     assert loaded.repair_authorization == "not_authorized"
     assert loaded.repair_attempted is False
     assert loaded.authorization_source == "application_registration"
+    assert loaded.capability_execution == record.capability_execution
     assert loaded.authorization_reason == reason
     assert loaded.events[0].event_type == RecoveryEventType.REPAIR_NOT_AUTHORIZED
 

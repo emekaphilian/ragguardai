@@ -20,6 +20,7 @@ from ragguard.diagnosis.diagnostic_agent import diagnose
 from ragguard.evaluation.evaluator import Evaluator
 from ragguard.repair.repair_engine import RepairEngine
 from ragguard.storage.vector_store import VectorStore
+from ragguard.observability.recovery_audit import RecoveryEventType
 
 
 def build_duplicate_graph(repair_engine=None):
@@ -300,6 +301,59 @@ def test_langgraph_rolls_back_a_worse_repair():
     assert result["evaluation_result"] is result["repair_result"].before_metrics
     assert "re_evaluate" in result["completed_nodes"]
     assert "rollback" in result["completed_nodes"]
+
+
+class RaisingRepairEngine:
+    def execute(self, *args, **kwargs):
+        raise RuntimeError("private adapter detail")
+
+
+def test_langgraph_audits_repair_execution_errors_and_escalates():
+    graph, state = build_duplicate_graph(RaisingRepairEngine())
+
+    result = graph.invoke(state)
+
+    assert result["status"] == "escalated"
+    assert result["repair_result"] is None
+    assert result["repair_attempts"] == [{
+        "strategy": "DEDUPLICATE",
+        "status": "failed",
+        "improvement": None,
+    }]
+    assert result["escalation_reason"] == "Repair execution failed (RuntimeError)."
+    assert "repair" in result["completed_nodes"]
+    assert "re_evaluate" not in result["completed_nodes"]
+    failed_event = next(
+        event for event in result["recovery_audit"].events
+        if event.event_type == RecoveryEventType.REPAIR_COMPLETED
+    )
+    assert failed_event.status == "failed"
+    assert failed_event.metadata["error_type"] == "RuntimeError"
+    assert "private adapter detail" not in failed_event.reason
+
+
+class RaisingValidationEngine(RepairEngine):
+    def validate(self, result):
+        raise RuntimeError("private validator detail")
+
+
+def test_langgraph_rolls_back_and_audits_validation_errors():
+    graph, state = build_duplicate_graph(RaisingValidationEngine())
+    original_retrieval = state.retrieval_result
+
+    result = graph.invoke(state)
+
+    assert result["status"] == "escalated"
+    assert result["validation_result"].valid is False
+    assert result["repair_result"].status == "rolled_back"
+    assert result["retrieval_result"] is original_retrieval
+    validation_event = next(
+        event for event in result["recovery_audit"].events
+        if event.event_type == RecoveryEventType.VALIDATION_COMPLETED
+    )
+    assert validation_event.status == "failed"
+    assert validation_event.validation_valid is False
+    assert validation_event.metadata["error_type"] == "RuntimeError"
 
 
 def test_failure_runs_diagnosis_then_escalates_without_repair_budget():

@@ -2,7 +2,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ragguard.api.app import app
+from ragguard.api.routes import repairs as repair_routes
 from ragguard.api.runtime import workspace
+from ragguard.observability.application_repository import InMemoryApplicationRepository
+from ragguard.tenants.application_registration import ApplicationRegistration
 
 @pytest.fixture(scope="module")
 def client():
@@ -32,6 +35,11 @@ def test_query_returns_stable_response_contract(client):
     assert "latency_ms" in body
     assert "reliability_evaluation" in body
     assert "reliability_failure" in body
+    assert body["capability_execution"]["independent_verification"] == {
+        "authorization": "not_applicable",
+        "performed": False,
+        "reason": "managed_index",
+    }
 
     assert isinstance(body["answer"], str)
     assert isinstance(body["retrieval_quality"], dict)
@@ -45,6 +53,14 @@ def test_query_returns_stable_response_contract(client):
         "weak_retrieval",
         "duplicate_context",
         "embedding_degraded",
+        "retrieval_bypassed",
+        "retrieval_not_attempted",
+        "retrieval_empty",
+        "evidence_insufficient",
+        "generation_failed",
+        "infrastructure_failed",
+        "retrieval_failed",
+        "latency_anomaly",
     }
 
 
@@ -67,7 +83,59 @@ def test_query_lab_can_avoid_recording_controlled_tests(client):
     assert workspace.failures == failures_before
 
 
-def test_repair_route_uses_repair_engine_validation(client):
+def test_repair_route_requires_application_repair_authorization(
+    client, monkeypatch,
+):
+    applications = InMemoryApplicationRepository()
+    applications.upsert(ApplicationRegistration(
+        ragguard_tenant_id="development",
+        application_id="trustassist",
+        display_name="TrustAssist",
+        environment="development",
+        knowledge_source="managed_index",
+        vector_namespace="development",
+        repair_authorized=False,
+    ))
+    monkeypatch.setattr(repair_routes, "application_repository", applications)
+    invoked = []
+    monkeypatch.setattr(
+        repair_routes,
+        "run_sequential",
+        lambda *args, **kwargs: invoked.append(True),
+    )
+
+    response = client.post(
+        "/api/v1/repair",
+        json={
+            "query": "How do I request a refund?",
+            "answer": "Refunds are available within 30 days of purchase.",
+            "relevant_chunk_ids": ["refund:0"],
+        },
+    )
+
+    assert response.status_code == 403
+    assert "has not authorized" in response.json()["detail"]
+    assert response.json()["capability_execution"]["repair"] == {
+        "authorization": "not_authorized",
+        "performed": False,
+        "reason": "application_not_authorized",
+    }
+    assert invoked == []
+
+
+def test_repair_route_uses_repair_engine_validation(client, monkeypatch):
+    applications = InMemoryApplicationRepository()
+    applications.upsert(ApplicationRegistration(
+        ragguard_tenant_id="development",
+        application_id="trustassist",
+        display_name="TrustAssist",
+        environment="development",
+        knowledge_source="managed_index",
+        vector_namespace="development",
+        repair_authorized=True,
+        context_verification_authorized=True,
+    ))
+    monkeypatch.setattr(repair_routes, "application_repository", applications)
     response = client.post(
         "/api/v1/repair",
         json={
@@ -90,6 +158,12 @@ def test_repair_route_uses_repair_engine_validation(client):
     assert body["completed_nodes"][:2] == ["evaluate", "detect"]
     assert "attempted_repairs" in body
     assert "max_repair_attempts" in body
+    assert body["capability_execution"]["repair"]["authorization"] == "authorized"
+    assert body["capability_execution"]["independent_verification"] == {
+        "authorization": "not_applicable",
+        "performed": False,
+        "reason": "managed_index",
+    }
 
 
 def test_detect_route_uses_failure_detector(client):

@@ -71,6 +71,28 @@ PUT    /api/v1/admin/applications
 DELETE /api/v1/admin/applications/<tenant>/<application>/<environment>
 ```
 
+For guided, observation-only onboarding, the Connect Application wizard calls
+`POST /api/v1/admin/applications/onboard`. It creates a registration with repair,
+context access, and independent verification disabled, then returns a
+high-entropy `RAGGUARD_OBSERVATION_TOKEN` once. Save it in the source
+application's secret manager and configure the observer to send it as a bearer
+token. The wizard never stores the workspace administrator token in the
+browser. Configure `RAGGUARD_ADMIN_TOKEN` only on the RAGGuard server; without
+it, registration and credential rotation are unavailable.
+
+The wizard marks an application connected only after it receives and evaluates
+a real observation. It does not send a synthetic test request to the source
+application. Credential rotation is available to administrators at
+`POST /api/v1/admin/applications/<tenant>/<application>/<environment>/observation-credential`;
+the new token is shown once and immediately invalidates the previous
+application-specific credential.
+
+The default in-memory backend is for local development: registrations and
+observation credentials are lost when the process restarts. Production
+deployments should use `RAGGUARD_AUDIT_BACKEND=postgres` and
+`RAGGUARD_DATABASE_URL` so application registrations and credential hashes
+persist. Only SHA-256 hashes of generated application credentials are stored.
+
 Registrations support `managed_index`, `external_rag_api`, and
 `observation_only`. Managed indexes specify a `vector_namespace`. External
 adapters use an HTTPS `query_endpoint_url` implementing contract v1: accept

@@ -56,6 +56,7 @@ def build_recovery_response(state) -> dict:
         "graph_run_id": get_value("graph_run_id"),
         "failure_detected": failure is not None,
         "failure_type": failure_type,
+        "diagnosis": get_value("diagnosis"),
         "attempts": get_value("repair_attempts", []),
         "original_score": original_score,
         "final_score": final_score,

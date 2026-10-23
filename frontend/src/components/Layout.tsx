@@ -3,6 +3,7 @@ import { getApiHealth, getDashboard } from '../api/client'
 
 const items = [
   ['overview', 'Overview'],
+  ['connect', 'Connect Application'],
   ['query', 'Query Lab'],
   ['runs', 'Query Runs'],
   ['recoveries', 'Recoveries'],
@@ -16,7 +17,7 @@ const items = [
 ]
 
 const icons: Record<string, string> = {
-  overview: '◈', query: '⌕', runs: '◉', recoveries: '↻', failures: '!',
+  overview: '◈', connect: '＋', query: '⌕', runs: '◉', recoveries: '↻', failures: '!',
   escalations: '↗', strategies: '⇄', applications: '▦', audit: '≡',
   capabilities: '⚙', documents: '▤',
 }

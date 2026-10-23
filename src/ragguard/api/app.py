@@ -16,6 +16,7 @@ from .routes.observations import router as observations_router
 from .routes.observations import recovery_repository
 from .routes.replay import router as replay_router
 from .routes.admin import router as admin_router
+from .routes.integration import router as integration_router
 from .recovery_routes import build_recovery_router
 
 from ragguard.api.middleware import resolve_request_context
@@ -80,6 +81,7 @@ app.include_router(repairs_router, prefix="/api/v1")
 app.include_router(dashboard_router, prefix="/api/v1")
 app.include_router(narrator_router, prefix="/api/v1")
 app.include_router(observations_router, prefix="/api/v1")
+app.include_router(integration_router, prefix="/api/v1")
 app.include_router(build_recovery_router(recovery_repository))
 app.include_router(replay_router)
 app.include_router(admin_router, prefix="/api/v1")

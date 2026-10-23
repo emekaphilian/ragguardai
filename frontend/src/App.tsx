@@ -7,6 +7,7 @@ import Overview from './pages/Overview'
 import QueryLab from './pages/QueryLabExperience'
 import Runs from './pages/Runs'
 import Recoveries from './pages/Recoveries'
+import ConnectApplication from './pages/ConnectApplication'
 
 type OperationsView = 'failures' | 'escalations' | 'strategies' | 'applications' | 'audit' | 'capabilities'
 
@@ -27,6 +28,8 @@ export default function App() {
     content = <QueryLab />
   } else if (page === 'runs') {
     content = <Runs />
+  } else if (page === 'connect') {
+    content = <ConnectApplication />
   } else if (page === 'recoveries') {
     content = <Recoveries key={`${recoverySearch}:${recoveryStatus}`} initialSearch={recoverySearch} initialStatusFilter={recoveryStatus} />
   } else if (['failures', 'escalations', 'strategies', 'applications', 'audit', 'capabilities'].includes(page)) {

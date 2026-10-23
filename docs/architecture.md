@@ -48,8 +48,11 @@ contract in `ragguard.evaluation.live`. Each application owns a small adapter
 that maps its framework-specific retrieval result to this stable payload.
 RAGGuard consumes the query, application and environment, retrieved chunk IDs
 and scores, retrieval method, embedding degradation signal, latency, and
-optional answer. It does not require a particular provider, vector store, or
-RAG framework. The external contract has no customer `tenant_id`; service
+optional answer. Optional v1 telemetry can state whether retrieval was required
+and attempted, report evidence sufficiency and generation status, identify a
+failed stage and safe error code, provide request identity, and include
+non-negative stage timings. `source.source_tenant_id` is an optional identity
+from the source system; it is never used as RAGGuard's internal tenant. Service
 credentials map each registered application to RAGGuard's separate internal
 tenant and storage namespace.
 
@@ -60,18 +63,45 @@ Applications can submit this payload to `POST /api/v1/observations`:
   "contract_version": "v1",
   "source": {
     "application_id": "trustassist",
-    "environment": "production"
+    "environment": "production",
+    "source_tenant_id": "customer-456"
   },
   "query": "How do I request a refund?",
+  "request_id": "request-123",
   "retrieved_chunks": [
     {"id": "chunk-123", "score": 0.86},
     {"id": "chunk-456", "score": 0.79}
   ],
   "retrieval_method": "hybrid",
+  "retrieval_required": true,
+  "retrieval_attempted": true,
   "embedding_degraded": false,
   "retrieval_latency_ms": 82,
+  "stage_timings_ms": {
+    "embedding": 21,
+    "retrieval": 82,
+    "generation": 740
+  },
+  "evidence_sufficient": true,
+  "generation_status": "succeeded",
   "answer": "Refunds are available within 30 days."
 }
+```
+
+When `retrieval_required` is false, an empty result is an intentional bypass,
+not a `NO_RETRIEVAL` failure. The new intent fields are optional so existing v1
+producers remain valid; events that omit both retain the legacy empty-result
+classification. Latency anomalies are only classified for stages configured
+in `live_latency_thresholds_ms`; no latency cause or threshold is inferred
+from missing or unconfigured timing data.
+
+For example, a deployment may add `live_latency_thresholds_ms` to its YAML
+settings with measured service objectives:
+
+```yaml
+live_latency_thresholds_ms:
+  retrieval: 1500
+  generation: 10000
 ```
 
 The endpoint returns live evaluation signals and a failure event when a
@@ -99,9 +129,11 @@ registered HTTPS query adapter. Its v1 request is:
 
 The adapter responds with `contract_version`, `answer`, `retrieved_chunks`
 (each containing an ID, score, and optionally text and source details),
-`retrieval_method`, `retrieval_latency_ms`, and `embedding_degraded`. RAGGuard
-evaluates that response using the same live evaluator as submitted
-observations. Query, observation, health, and metadata are separate
+`retrieval_method`, `retrieval_latency_ms`, and `embedding_degraded`. Optional
+`request_id`, `stage_timings_ms`, evidence sufficiency, generation status,
+failed-stage, and safe error-code fields are forwarded into the shared
+observation evaluator. Query Lab records retrieval and answer-generation
+timings separately for the managed-index path. Query, observation, health, and metadata are separate
 capabilities: applications only expose the capabilities they support. The
 current registration supports managed-index querying, external HTTPS querying,
 and observation-only applications. Health and metadata probes are optional

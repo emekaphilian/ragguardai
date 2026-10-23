@@ -1,6 +1,7 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import os
+import math
 import yaml
 
 MAX_REPAIR_ATTEMPTS = 3
@@ -43,6 +44,7 @@ class Settings:
     tenant_policies: tuple = ()
     service_auth: ServiceAuthSettings = ServiceAuthSettings()
     max_repair_attempts: int = MAX_REPAIR_ATTEMPTS
+    live_latency_thresholds_ms: dict[str, float] = field(default_factory=dict)
     audit_retention_days: int = DEFAULT_AUDIT_RETENTION_DAYS
     audit_max_page_size: int = DEFAULT_AUDIT_MAX_PAGE_SIZE
     event_retention_days: int = DEFAULT_EVENT_RETENTION_DAYS
@@ -131,6 +133,25 @@ def _resolve_audit_settings(data: dict) -> dict[str, int]:
     }
 
 
+def _resolve_live_latency_thresholds(data: dict) -> dict[str, float]:
+    configured = data.get("live_latency_thresholds_ms", {}) or {}
+    if not isinstance(configured, dict):
+        raise ValueError("live_latency_thresholds_ms must be a mapping of stages to milliseconds.")
+
+    thresholds: dict[str, float] = {}
+    for stage, raw_value in configured.items():
+        if not isinstance(stage, str) or not stage.strip() or isinstance(raw_value, bool):
+            raise ValueError("Latency stages must be non-empty strings with numeric thresholds.")
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Latency threshold for {stage!r} must be numeric.") from exc
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(f"Latency threshold for {stage!r} must be greater than zero.")
+        thresholds[stage] = value
+    return thresholds
+
+
 def load_settings(path: str | None = None) -> Settings:
     path = path or os.getenv("RAGGUARD_CONFIG", "configs/development.yaml")
     p = Path(path)
@@ -139,6 +160,7 @@ def load_settings(path: str | None = None) -> Settings:
             llm=_resolve_llm_settings({}),
             service_auth=_resolve_service_auth_settings(),
             max_repair_attempts=_resolve_max_repair_attempts({}),
+            live_latency_thresholds_ms=_resolve_live_latency_thresholds({}),
             **_resolve_audit_settings({}),
         )
     data = yaml.safe_load(p.read_text()) or {}
@@ -177,5 +199,6 @@ def load_settings(path: str | None = None) -> Settings:
         tenant_policies=tuple(policies),
         service_auth=service_auth,
         max_repair_attempts=_resolve_max_repair_attempts(data),
+        live_latency_thresholds_ms=_resolve_live_latency_thresholds(data),
         **_resolve_audit_settings(data),
     )

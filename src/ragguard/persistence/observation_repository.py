@@ -38,10 +38,11 @@ class PostgreSQLObservationRepository(ObservationRepository):
                     INSERT INTO observations (
                         observation_id, ragguard_tenant_id, application_id,
                         created_at, status, query, evaluation,
-                        observation, failure, recovery
+                        observation, failure, recovery, capability_execution
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s,
-                        %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb
+                        %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb,
+                        %s::jsonb
                     )
                     ON CONFLICT (observation_id) DO UPDATE SET
                         ragguard_tenant_id = EXCLUDED.ragguard_tenant_id,
@@ -52,7 +53,8 @@ class PostgreSQLObservationRepository(ObservationRepository):
                         evaluation = EXCLUDED.evaluation,
                         observation = EXCLUDED.observation,
                         failure = EXCLUDED.failure,
-                        recovery = EXCLUDED.recovery
+                        recovery = EXCLUDED.recovery,
+                        capability_execution = EXCLUDED.capability_execution
                     """,
                     (
                         record.observation_id,
@@ -65,6 +67,7 @@ class PostgreSQLObservationRepository(ObservationRepository):
                         json.dumps(record.observation),
                         json.dumps(record.failure),
                         json.dumps(record.recovery),
+                        json.dumps(record.capability_execution),
                     ),
                 )
         return record
@@ -81,7 +84,8 @@ class PostgreSQLObservationRepository(ObservationRepository):
                 cursor.execute(
                     "SELECT observation_id, ragguard_tenant_id, "
                     "application_id, created_at, status, query, evaluation, "
-                    "observation, failure, recovery FROM observations "
+                    "observation, failure, recovery, capability_execution "
+                    "FROM observations "
                     "WHERE observation_id = %s",
                     (observation_id,),
                 )
@@ -113,7 +117,8 @@ class PostgreSQLObservationRepository(ObservationRepository):
                 cursor.execute(
                     "SELECT observation_id, ragguard_tenant_id, "
                     "application_id, created_at, status, query, evaluation, "
-                    "observation, failure, recovery FROM observations "
+                    "observation, failure, recovery, capability_execution "
+                    "FROM observations "
                     f"{where_clause} ORDER BY created_at DESC LIMIT %s OFFSET %s",
                     tuple(parameters),
                 )
@@ -183,7 +188,7 @@ class PostgreSQLObservationRepository(ObservationRepository):
     @staticmethod
     def _decode(row: tuple[Any, ...]) -> ObservationRecord:
         values = list(row)
-        for index in range(6, 10):
+        for index in range(6, 11):
             if isinstance(values[index], str):
                 values[index] = json.loads(values[index])
         return ObservationRecord(*values)

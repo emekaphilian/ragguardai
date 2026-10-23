@@ -8,8 +8,14 @@ POLICY = {
     FailureMode.STALE_INDEX: [RepairType.REINDEX],
     FailureMode.POOR_CHUNKING: [RepairType.RECHUNK],
     FailureMode.DUPLICATE_CONTEXT: [RepairType.DEDUPLICATE],
+    FailureMode.WEAK_RETRIEVAL: [
+        RepairType.HYBRID_RETRIEVAL,
+        RepairType.RERANK,
+    ],
+    FailureMode.EMBEDDING_DEGRADED: [RepairType.HYBRID_RETRIEVAL],
     FailureMode.MULTI_HOP_FAILURE: [RepairType.QUERY_DECOMPOSITION],
 }
+
 
 def recommended_repairs(mode):
     return POLICY.get(mode, [RepairType.HUMAN_ESCALATION])

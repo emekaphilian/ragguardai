@@ -1,9 +1,9 @@
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
-from ragguard.common.schemas import EvaluationResult
+from ragguard.common.schemas import DiagnosisResult, EvaluationResult
 from ragguard.config import MAX_REPAIR_ATTEMPTS
 from ragguard.detection.live_failure import LiveFailureEvent
 from ragguard.evaluation.live import LiveEvaluation
@@ -15,6 +15,19 @@ class QueryRequest(BaseModel):
     record_run: bool = True
     application_id: str | None = None
     environment: str | None = None
+
+
+class CapabilityExecutionState(BaseModel):
+    authorization: Literal["authorized", "not_authorized", "not_applicable"]
+    performed: bool
+    reason: str | None = None
+
+
+class CapabilityExecution(BaseModel):
+    context_verification: CapabilityExecutionState
+    independent_verification: CapabilityExecutionState
+    repair: CapabilityExecutionState
+
 
 class QueryResponse(BaseModel):
     answer: str
@@ -28,11 +41,12 @@ class QueryResponse(BaseModel):
     application_id: str | None = None
     environment: str | None = None
     knowledge_source: str | None = None
+    capability_execution: CapabilityExecution | None = None
 
 
 class AdapterRetrievedChunk(BaseModel):
     id: str = Field(min_length=1)
-    score: float
+    score: float = Field(allow_inf_nan=False)
     text: str = ""
     document_id: str | None = None
     source: str | None = None
@@ -44,8 +58,27 @@ class ExternalRAGQueryResponse(BaseModel):
     answer: str
     retrieved_chunks: list[AdapterRetrievedChunk] = Field(default_factory=list)
     retrieval_method: str
-    retrieval_latency_ms: float = Field(default=0.0, ge=0)
+    retrieval_latency_ms: float = Field(default=0.0, ge=0, allow_inf_nan=False)
+    stage_timings_ms: dict[str, Annotated[float, Field(ge=0, allow_inf_nan=False)]] = Field(
+        default_factory=dict
+    )
+    request_id: str | None = Field(default=None, min_length=1, max_length=200)
     embedding_degraded: bool = False
+    evidence_sufficient: bool | None = None
+    generation_status: Literal["succeeded", "failed", "skipped"] | None = None
+    failed_stage: Literal[
+        "retrieval",
+        "embedding",
+        "generation",
+        "database",
+        "external_service",
+        "unknown",
+    ] | None = None
+    error_code: str | None = Field(
+        default=None,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9_.:-]+$",
+    )
 
 class DocumentRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
@@ -69,8 +102,28 @@ class ApplicationRegistrationRequest(BaseModel):
     vector_namespace: str | None = None
     query_endpoint_url: str | None = None
     query_token_env_var: str | None = Field(default=None, max_length=128)
+    repair_endpoint_url: str | None = None
+    repair_token_env_var: str | None = Field(default=None, max_length=128)
     observation_token_env_var: str = Field(min_length=2, max_length=128)
     active: bool = True
+
+
+class ApplicationOnboardingRequest(BaseModel):
+    ragguard_tenant_id: str | None = Field(default=None, min_length=1, max_length=100)
+    application_id: str = Field(
+        min_length=1,
+        max_length=100,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+    )
+    display_name: str = Field(min_length=1, max_length=160)
+    environment: str = Field(min_length=1, max_length=80)
+
+
+class ApplicationCapabilityUpdateRequest(BaseModel):
+    context_verification_authorized: bool
+    independent_verification_authorized: bool
+    repair_authorized: bool
+
 
 class EvaluateRequest(BaseModel):
     query: str
@@ -107,6 +160,7 @@ class RecoveryResultResponse(BaseModel):
     graph_run_id: str | None = None
     failure_detected: bool = False
     failure_type: str | None = None
+    diagnosis: DiagnosisResult | None = None
     attempts: list[RecoveryAttemptResponse] = Field(default_factory=list)
     original_score: float | None = None
     final_score: float | None = None
@@ -114,10 +168,14 @@ class RecoveryResultResponse(BaseModel):
     completed_nodes: list[str] = Field(default_factory=list)
     escalation_reason: str | None = None
     repair_capability: Literal["available", "unavailable"] | None = None
+    repair_supported: bool | None = None
+    repair_eligible: bool | None = None
+    repair_validated: bool | None = None
     repair_authorization: Literal["authorized", "not_authorized"] | None = None
     repair_attempted: bool = False
     authorization_source: str | None = None
     authorization_reason: str | None = None
+    capability_execution: CapabilityExecution | None = None
 
 
 class ObservationRecoveryResponse(BaseModel):
@@ -125,6 +183,7 @@ class ObservationRecoveryResponse(BaseModel):
     evaluation: LiveEvaluation
     failure: LiveFailureEvent | None = None
     recovery: RecoveryResultResponse | None = None
+    capability_execution: CapabilityExecution | None = None
 
 
 class RecoveryAuditEventResponse(BaseModel):
@@ -166,10 +225,14 @@ class RecoveryAuditResponse(BaseModel):
     final_score: float | None = None
     improvement: float | None = None
     repair_capability: str | None = None
+    repair_supported: bool | None = None
+    repair_eligible: bool | None = None
+    repair_validated: bool | None = None
     repair_authorization: str | None = None
     repair_attempted: bool = False
     authorization_source: str | None = None
     authorization_reason: str | None = None
+    capability_execution: CapabilityExecution | None = None
     query: str | None = None
     retrieval_method: str | None = None
     embedding_degraded: bool | None = None

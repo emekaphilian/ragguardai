@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from ragguard.auth.tenant_context import TenantContext
+from ragguard.config import load_settings
 from ragguard.detection.live_detector import LiveFailureDetector
 from ragguard.evaluation.live import RAGObservation
 from ragguard.evaluation.live_evaluator import LiveEvaluator
@@ -14,7 +15,9 @@ def run_replay(
     recovery_service,
 ) -> dict:
     """Re-evaluate a saved observation and run it through an isolated graph service."""
-    evaluation = LiveEvaluator().evaluate(observation)
+    evaluation = LiveEvaluator(
+        latency_thresholds_ms=load_settings().live_latency_thresholds_ms,
+    ).evaluate(observation)
     failure = LiveFailureDetector().detect(observation, evaluation)
 
     if not recovery_service.available_repairs <= EXECUTABLE_REPAIRS:
