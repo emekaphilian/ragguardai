@@ -25,11 +25,28 @@ export type ProvisionedApplication = RegisteredApplication & {
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1'
 export const RAGGUARD_TENANT_ID = import.meta.env.VITE_RAGGUARD_TENANT_ID?.trim() || ''
+let csrfToken = ''
 
 function apiFetch(path: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers)
   if (RAGGUARD_TENANT_ID) headers.set('X-RAGGuard-Tenant', RAGGUARD_TENANT_ID)
-  return fetch(`${API_BASE}${path}`, { ...init, headers })
+  if (csrfToken) headers.set('X-CSRF-Token', csrfToken)
+  return fetch(`${API_BASE}${path}`, { ...init, headers, credentials: 'include' })
+}
+
+export type AuthSession = { authentication_required: boolean; authenticated: boolean; subject?: string; csrf_token?: string; administrator?: boolean }
+export async function getAuthSession(): Promise<AuthSession> {
+  const r = await fetch(`${API_BASE}/auth/session`, { credentials: 'include' })
+  if (!r.ok) throw new Error('Authentication status could not be checked')
+  const result: AuthSession = await r.json()
+  csrfToken = result.csrf_token || ''
+  return result
+}
+export function startLogin() { window.location.assign(`${API_BASE}/auth/login`) }
+export async function logout() {
+  const r = await apiFetch('/auth/logout', { method: 'POST' })
+  if (!r.ok) throw new Error(await responseError(r, 'Could not sign out'))
+  csrfToken = ''
 }
 
 export async function getApiHealth(): Promise<ApiHealth> {
@@ -87,8 +104,8 @@ export async function runRepair(query:string,answer:string,relevantChunkIds:stri
 }
 export async function getDocuments(){const r=await apiFetch('/documents');if(!r.ok)throw new Error('Documents unavailable');return r.json()}
 export async function getApplications():Promise<RegisteredApplication[]>{const r=await apiFetch('/applications');if(r.status===404)throw new Error('The configured API does not provide the application registry endpoint (GET /api/v1/applications). Deploy the current RAGGuard API, then refresh this page.');if(!r.ok)throw new Error(await responseError(r,'Applications unavailable'));return r.json()}
-export async function onboardApplication(payload:{application_id:string;display_name:string;environment:string},adminToken:string):Promise<ProvisionedApplication>{const body={...payload,...(RAGGUARD_TENANT_ID?{ragguard_tenant_id:RAGGUARD_TENANT_ID}:{})};const r=await apiFetch('/admin/applications/onboard',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${adminToken}`},body:JSON.stringify(body)});if(!r.ok)throw new Error(await responseError(r,'Could not register application'));return r.json()}
-export async function rotateApplicationCredential(application:RegisteredApplication,adminToken:string):Promise<ProvisionedApplication>{const tenantId=application.ragguard_tenant_id||RAGGUARD_TENANT_ID;if(!tenantId)throw new Error('The application workspace could not be identified.');const path=`/admin/applications/${encodeURIComponent(tenantId)}/${encodeURIComponent(application.application_id)}/${encodeURIComponent(application.environment)}/observation-credential`;const r=await apiFetch(path,{method:'POST',headers:{Authorization:`Bearer ${adminToken}`}});if(!r.ok)throw new Error(await responseError(r,'Could not rotate observation credential'));return r.json()}
+export async function onboardApplication(payload:{application_id:string;display_name:string;environment:string}):Promise<ProvisionedApplication>{const body={...payload,...(RAGGUARD_TENANT_ID?{ragguard_tenant_id:RAGGUARD_TENANT_ID}:{})};const r=await apiFetch('/admin/applications/onboard',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(!r.ok)throw new Error(await responseError(r,'Could not register application'));return r.json()}
+export async function rotateApplicationCredential(application:RegisteredApplication):Promise<ProvisionedApplication>{const tenantId=application.ragguard_tenant_id||RAGGUARD_TENANT_ID;if(!tenantId)throw new Error('The application workspace could not be identified.');const path=`/admin/applications/${encodeURIComponent(tenantId)}/${encodeURIComponent(application.application_id)}/${encodeURIComponent(application.environment)}/observation-credential`;const r=await apiFetch(path,{method:'POST'});if(!r.ok)throw new Error(await responseError(r,'Could not rotate observation credential'));return r.json()}
 export async function getIntegrationMethods(){const r=await apiFetch('/integration-methods');if(r.status===404)throw new Error('The configured API does not provide GET /api/v1/integration-methods. Confirm VITE_API_BASE_URL points to the intended RAGGuard API and deploy the current backend.');if(!r.ok)throw new Error(await responseError(r,'Integration methods unavailable'));return r.json()}
 export async function prepareApplicationIntegration(payload:{application_name:string;framework:string;environment:string;knowledge_source:string;integration_method?:string}){const r=await apiFetch('/application-integration',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(r.status===404)throw new Error('The configured API does not provide POST /api/v1/application-integration. Confirm VITE_API_BASE_URL points to the intended RAGGuard API and deploy the current backend.');if(!r.ok)throw new Error(await responseError(r,'Could not prepare integration plan'));return r.json()}
 export async function getRecycleBin(){const r=await apiFetch('/documents/recycle-bin');if(!r.ok)throw new Error('Recycle bin unavailable');return r.json()}

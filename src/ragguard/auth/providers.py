@@ -42,6 +42,24 @@ class DevelopmentHeaderAuthenticator:
         )
 
 
+class OIDCSessionAuthenticator:
+    """Resolve an opaque server session created by the OIDC callback."""
+
+    def authenticate(self, request: Request, settings: Settings) -> VerifiedPrincipal:
+        from ragguard.api.runtime import auth_repository
+
+        session_id = request.cookies.get(settings.authentication.session_cookie_name)
+        session = auth_repository.get_session(session_id) if session_id else None
+        if not session:
+            raise AuthenticationError("An authenticated session is required.")
+        request.state.auth_session = session
+        return VerifiedPrincipal(
+            issuer=session["issuer"],
+            subject=session["subject"],
+            authentication_method="oidc_session",
+        )
+
+
 def authenticate_principal(request: Request, settings: Settings) -> VerifiedPrincipal:
     mode = settings.authentication.mode
     if mode == "development_headers":
@@ -49,7 +67,7 @@ def authenticate_principal(request: Request, settings: Settings) -> VerifiedPrin
     if mode == "disabled":
         raise AuthenticationUnavailable("Human-user authentication is not configured.")
     if mode == "oidc":
-        raise AuthenticationUnavailable("OIDC authentication has not been configured yet.")
+        return OIDCSessionAuthenticator().authenticate(request, settings)
     if mode == "trusted_proxy":
         raise AuthenticationUnavailable("Trusted-proxy authentication has not been configured yet.")
     raise AuthenticationUnavailable("No authentication provider is configured.")

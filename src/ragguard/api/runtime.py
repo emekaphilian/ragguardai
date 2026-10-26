@@ -26,6 +26,7 @@ from ragguard.storage.vector_store import VectorStore
 from ragguard.persistence.observation_repository import create_observation_repository
 from ragguard.persistence.application_repository import create_application_repository
 from ragguard.config import load_settings
+from ragguard.auth.repository import create_auth_repository
 from ragguard.detection.live_detector import LiveFailureDetector
 from ragguard.evaluation.live import (
     ObservationSource,
@@ -37,6 +38,7 @@ from ragguard.evaluation.live_evaluator import LiveEvaluator
 
 observation_repository = create_observation_repository()
 application_repository = create_application_repository()
+auth_repository = create_auth_repository()
 
 
 class Workspace:

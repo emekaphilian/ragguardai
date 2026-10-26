@@ -1,4 +1,7 @@
 from contextlib import asynccontextmanager
+import hashlib
+import os
+import hmac
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,10 +21,12 @@ from .routes.observations import recovery_repository
 from .routes.replay import router as replay_router
 from .routes.admin import router as admin_router
 from .routes.integration import router as integration_router
+from ragguard.auth.oidc import router as auth_router
 from .recovery_routes import build_recovery_router
 
 from ragguard.api.middleware import resolve_request_context
 from ragguard.api.runtime import application_repository
+from ragguard.api.runtime import auth_repository
 from ragguard.common.exceptions import RAGGuardError
 from ragguard.config import load_settings
 from ragguard.persistence.database import apply_migrations, selected_persistence_backend
@@ -29,9 +34,39 @@ from ragguard.persistence.database import apply_migrations, selected_persistence
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    if selected_persistence_backend() in {"postgres", "postgresql"}:
+    settings = load_settings()
+    backend = selected_persistence_backend()
+    if settings.authentication.mode == "oidc":
+        auth = settings.authentication
+        required = (auth.oidc_issuer, auth.oidc_client_id, auth.oidc_client_secret,
+                    auth.oidc_redirect_uri, auth.frontend_url, auth.session_secret)
+        if any(not value for value in required):
+            raise RuntimeError("OIDC mode requires issuer, client credentials, redirect URI, frontend URL, and session secret.")
+        if len(auth.session_secret or "") < 32:
+            raise RuntimeError("RAGGUARD_SESSION_SECRET must contain at least 32 characters.")
+        if backend not in {"postgres", "postgresql"}:
+            raise RuntimeError("OIDC mode requires PostgreSQL-backed sessions and tenant memberships.")
+        if not auth.oidc_issuer.startswith("https://") or not auth.oidc_redirect_uri.startswith("https://"):
+            raise RuntimeError("Production OIDC issuer and redirect URI must use HTTPS.")
+        from urllib.parse import urlparse
+        frontend = urlparse(auth.frontend_url)
+        if frontend.scheme != "https" or not frontend.netloc or frontend.path not in {"", "/"}:
+            raise RuntimeError("RAGGUARD_FRONTEND_URL must be an HTTPS origin without a path.")
+        if auth.session_cookie_samesite == "none" and not auth.session_cookie_secure:
+            raise RuntimeError("Cross-site OIDC cookies require Secure.")
+        bootstrap_subject = os.getenv("RAGGUARD_OIDC_BOOTSTRAP_ADMIN_SUBJECT", "").strip()
+        bootstrap_tenant = os.getenv("RAGGUARD_OIDC_BOOTSTRAP_ADMIN_TENANT", "").strip()
+        if not bootstrap_subject or not bootstrap_tenant:
+            raise RuntimeError("Set the initial OIDC administrator subject and tenant before enabling OIDC.")
+    if backend in {"postgres", "postgresql"}:
         apply_migrations()
-    application_repository.bootstrap(load_settings().tenant_policies)
+    application_repository.bootstrap(settings.tenant_policies)
+    if settings.authentication.mode == "oidc":
+        issuer = settings.authentication.oidc_issuer
+        subject = os.environ["RAGGUARD_OIDC_BOOTSTRAP_ADMIN_SUBJECT"].strip()
+        tenant = os.environ["RAGGUARD_OIDC_BOOTSTRAP_ADMIN_TENANT"].strip()
+        if auth_repository.get_membership(issuer, subject, tenant) is None:
+            auth_repository.grant_membership(issuer, subject, tenant, ("admin",))
     yield
 
 
@@ -42,14 +77,23 @@ app.add_exception_handler(
     ragguard_exception_handler,
 )
 
+_app_settings = load_settings()
+_auth_settings = _app_settings.authentication
+_development_origins = [] if (
+    _auth_settings.mode == "oidc" or _app_settings.environment.lower() == "production"
+) else [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:5174",
-        "http://127.0.0.1:5174",
-    ],
+    allow_origins=list(dict.fromkeys([
+        *_development_origins,
+        *_auth_settings.frontend_origins,
+        *([_auth_settings.frontend_url.rstrip("/")] if _auth_settings.frontend_url else []),
+    ])),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -60,10 +104,25 @@ app.add_middleware(
 async def attach_tenant_context(request: Request, call_next):
     # External telemetry identifies its source in the observation contract;
     # it is independent of RAGGuard's internal workspace tenant context.
+    settings = load_settings()
+    if (
+        settings.authentication.mode == "oidc"
+        and request.method not in {"GET", "HEAD", "OPTIONS"}
+        and request.url.path not in {"/api/v1/observations", "/api/v1/auth/callback"}
+    ):
+        session_id = request.cookies.get(settings.authentication.session_cookie_name)
+        if session_id:
+            session = auth_repository.get_session(session_id)
+            supplied = request.headers.get("X-CSRF-Token", "")
+            supplied_hash = hashlib.sha256(supplied.encode()).hexdigest()
+            if not session or not supplied or not hmac.compare_digest(session.get("csrf_hash", ""), supplied_hash):
+                return JSONResponse(status_code=403, content={"detail": "CSRF verification failed."})
+
     if (
         request.url.path == "/api/v1/health"
         or request.url.path == "/api/v1/observations"
         or request.url.path.startswith("/api/v1/admin/")
+        or request.url.path.startswith("/api/v1/auth/")
     ):
         return await call_next(request)
 
@@ -85,6 +144,12 @@ async def attach_tenant_context(request: Request, call_next):
             content={"detail": "Unknown tenant"},
         )
 
+    context = request.state.tenant_context
+    if settings.authentication.mode == "oidc" and request.method not in {"GET", "HEAD", "OPTIONS"}:
+        roles = {str(role).lower() for role in context.roles}
+        if not (roles & {"operator", "admin", "owner", "workspace_admin"}):
+            return JSONResponse(status_code=403, content={"detail": "This tenant role cannot modify workspace data."})
+
     return await call_next(request)
 
 
@@ -100,3 +165,4 @@ app.include_router(integration_router, prefix="/api/v1")
 app.include_router(build_recovery_router(recovery_repository))
 app.include_router(replay_router)
 app.include_router(admin_router, prefix="/api/v1")
+app.include_router(auth_router, prefix="/api/v1")

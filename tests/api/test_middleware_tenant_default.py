@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from ragguard.auth.principal import TenantAuthorizationError, VerifiedPrincipal
 from ragguard.api.app import app
-from ragguard.config import AuthenticationSettings, ServiceAuthSettings, Settings, TenantMembership
+from ragguard.config import AuthenticationSettings, ServiceAuthSettings, Settings
 from ragguard.tenants.models import TenantPolicy
 
 
@@ -119,16 +119,17 @@ def test_health_check_remains_available_without_dashboard_auth(monkeypatch):
 
 
 def test_changing_tenant_selection_does_not_bypass_server_membership(monkeypatch):
+    from ragguard.api import runtime
+    from ragguard.auth.repository import InMemoryAuthRepository
+    repository = InMemoryAuthRepository()
+    repository.grant_membership(
+        "https://identity.example.test/", "user-123", "tenant-a", ("viewer",)
+    )
+    monkeypatch.setattr(runtime, "auth_repository", repository)
     settings = Settings(
         environment="production",
         authentication=AuthenticationSettings(
             mode="oidc",
-            tenant_memberships=(TenantMembership(
-                issuer="https://identity.example.test/",
-                subject="user-123",
-                tenant_id="tenant-a",
-                roles=("viewer",),
-            ),),
         ),
         tenant_policies=(
             TenantPolicy(

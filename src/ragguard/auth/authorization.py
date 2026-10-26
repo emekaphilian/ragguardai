@@ -19,17 +19,14 @@ def resolve_authorized_tenant(
             raise TenantAuthorizationError("Development identity is not authorized.")
         roles = principal.roles
     else:
-        membership = next((
-            item for item in settings.authentication.tenant_memberships
-            if item.issuer == principal.issuer
-            and item.subject == principal.subject
-            and item.tenant_id == tenant_id
-        ), None)
-        if membership is None:
+        from ragguard.api.runtime import auth_repository
+
+        roles = auth_repository.get_membership(principal.issuer, principal.subject, tenant_id)
+        if roles is None:
             raise TenantAuthorizationError("The authenticated user is not a member of this tenant.")
-        # Roles are issued by RAGGuard membership policy, not accepted directly
-        # from identity-provider or proxy role headers.
-        roles = membership.roles
+        if not roles:
+            raise TenantAuthorizationError("The tenant membership has no granted roles.")
+        # Roles come from RAGGuard's membership store, never IdP claim headers.
 
     try:
         return TenantService(settings).resolve(

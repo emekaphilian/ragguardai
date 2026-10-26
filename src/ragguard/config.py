@@ -2,6 +2,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import os
 import math
+from urllib.parse import urlparse
+from urllib.parse import urlparse
 import yaml
 
 MAX_REPAIR_ATTEMPTS = 3
@@ -36,19 +38,22 @@ class ServiceAuthSettings:
 
 
 @dataclass(frozen=True)
-class TenantMembership:
-    issuer: str
-    subject: str
-    tenant_id: str
-    roles: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
 class AuthenticationSettings:
     # ``disabled`` is the fail-closed default. Development headers require an
     # explicit mode in the local/test configuration.
     mode: str = "disabled"
-    tenant_memberships: tuple[TenantMembership, ...] = ()
+    oidc_issuer: str | None = None
+    oidc_client_id: str | None = None
+    oidc_client_secret: str | None = None
+    oidc_token_auth_method: str = "client_secret_basic"
+    oidc_redirect_uri: str | None = None
+    frontend_url: str | None = None
+    session_secret: str | None = None
+    session_cookie_name: str = "ragguard_session"
+    session_cookie_secure: bool = True
+    session_cookie_samesite: str = "lax"
+    session_ttl_seconds: int = 28800
+    frontend_origins: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -122,28 +127,65 @@ def _resolve_authentication_settings(data: dict) -> AuthenticationSettings:
     if mode not in {"disabled", "development_headers", "oidc", "trusted_proxy"}:
         raise ValueError(f"Unsupported RAGGUARD_AUTH_MODE: {mode!r}.")
 
-    memberships = []
-    for item in auth_data.get("tenant_memberships", ()) or ():
-        if not isinstance(item, dict):
-            raise ValueError("authentication.tenant_memberships entries must be mappings.")
-        issuer = str(item.get("issuer", "")).strip()
-        subject = str(item.get("subject", "")).strip()
-        tenant_id = str(item.get("tenant_id", "")).strip()
-        roles = item.get("roles", ()) or ()
-        if not issuer or not subject or not tenant_id:
-            raise ValueError("Each tenant membership requires issuer, subject, and tenant_id.")
-        if isinstance(roles, str):
-            roles = (roles,)
-        if not isinstance(roles, (list, tuple)):
-            raise ValueError("Tenant membership roles must be a list of strings.")
-        memberships.append(TenantMembership(
-            issuer=issuer,
-            subject=subject,
-            tenant_id=tenant_id,
-            roles=tuple(str(role).strip() for role in roles if str(role).strip()),
-        ))
-
-    return AuthenticationSettings(mode=mode, tenant_memberships=tuple(memberships))
+    origins = os.getenv("RAGGUARD_FRONTEND_ORIGINS", "")
+    frontend_origins = tuple(
+        origin.strip().rstrip("/")
+        for origin in origins.split(",")
+        if origin.strip()
+    )
+    for origin in frontend_origins:
+        parsed_origin = urlparse(origin)
+        local_http = parsed_origin.scheme == "http" and parsed_origin.hostname in {"localhost", "127.0.0.1"}
+        if (
+            origin == "*"
+            or parsed_origin.scheme not in {"https", "http"}
+            or not parsed_origin.netloc
+            or parsed_origin.path not in {"", "/"}
+            or parsed_origin.username
+            or parsed_origin.password
+            or (parsed_origin.scheme != "https" and not local_http)
+        ):
+            raise ValueError("RAGGUARD_FRONTEND_ORIGINS must contain exact HTTPS origins (localhost HTTP is allowed locally).")
+    for origin in frontend_origins:
+        parsed_origin = urlparse(origin)
+        local_http = parsed_origin.scheme == "http" and parsed_origin.hostname in {"localhost", "127.0.0.1"}
+        if (
+            origin == "*"
+            or parsed_origin.scheme not in {"https", "http"}
+            or not parsed_origin.netloc
+            or parsed_origin.path not in {"", "/"}
+            or parsed_origin.username
+            or parsed_origin.password
+            or (parsed_origin.scheme != "https" and not local_http)
+        ):
+            raise ValueError("RAGGUARD_FRONTEND_ORIGINS must contain exact HTTPS origins (localhost HTTP is allowed locally).")
+    same_site = os.getenv("RAGGUARD_SESSION_COOKIE_SAMESITE", "lax").strip().lower()
+    if same_site not in {"lax", "strict", "none"}:
+        raise ValueError("RAGGUARD_SESSION_COOKIE_SAMESITE must be lax, strict, or none.")
+    secure = os.getenv("RAGGUARD_SESSION_COOKIE_SECURE", "true").strip().lower() in {"1", "true", "yes", "on"}
+    if same_site == "none" and not secure:
+        raise ValueError("SameSite=None session cookies require Secure.")
+    ttl = int(os.getenv("RAGGUARD_SESSION_TTL_SECONDS", "28800"))
+    if not 300 <= ttl <= 86400:
+        raise ValueError("RAGGUARD_SESSION_TTL_SECONDS must be between 300 and 86400.")
+    token_auth_method = os.getenv("RAGGUARD_OIDC_TOKEN_AUTH_METHOD", "client_secret_basic").strip().lower()
+    if token_auth_method not in {"client_secret_basic", "client_secret_post"}:
+        raise ValueError("RAGGUARD_OIDC_TOKEN_AUTH_METHOD must be client_secret_basic or client_secret_post.")
+    return AuthenticationSettings(
+        mode=mode,
+        oidc_issuer=(os.getenv("RAGGUARD_OIDC_ISSUER") or "").strip() or None,
+        oidc_client_id=os.getenv("RAGGUARD_OIDC_CLIENT_ID"),
+        oidc_client_secret=os.getenv("RAGGUARD_OIDC_CLIENT_SECRET"),
+        oidc_token_auth_method=token_auth_method,
+        oidc_redirect_uri=os.getenv("RAGGUARD_OIDC_REDIRECT_URI"),
+        frontend_url=os.getenv("RAGGUARD_FRONTEND_URL"),
+        session_secret=os.getenv("RAGGUARD_SESSION_SECRET"),
+        session_cookie_name=os.getenv("RAGGUARD_SESSION_COOKIE_NAME", "ragguard_session"),
+        session_cookie_secure=secure,
+        session_cookie_samesite=same_site,
+        session_ttl_seconds=ttl,
+        frontend_origins=frontend_origins,
+    )
 
 
 def _resolve_max_repair_attempts(data: dict) -> int:

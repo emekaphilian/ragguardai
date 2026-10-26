@@ -45,7 +45,6 @@ export default function ConnectApplication() {
   const [refreshing, setRefreshing] = useState(false)
   const [copied, setCopied] = useState(false)
   const [connectionNotice, setConnectionNotice] = useState('')
-  const [adminCredential, setAdminCredential] = useState('')
   const [provisioning, setProvisioning] = useState(false)
   const [issuedCredential, setIssuedCredential] = useState<{ application: RegisteredApplication; token: string } | null>(null)
 
@@ -126,10 +125,6 @@ export default function ConnectApplication() {
       setError('This guided registration flow currently provisions observation-only monitoring. Managed-index and external-query registrations need their additional configuration first.')
       return
     }
-    if (!adminCredential) {
-      setError('Enter the workspace administrator credential to register this application.')
-      return
-    }
     setProvisioning(true)
     setError('')
     try {
@@ -137,10 +132,9 @@ export default function ConnectApplication() {
         application_id: plan.suggested_application_id,
         display_name: plan.application_name,
         environment: plan.environment,
-      }, adminCredential)
+      })
       const { observation_credential: token, ...application } = result
       setIssuedCredential({ application, token })
-      setAdminCredential('')
       setApplications(await getApplications())
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Could not register this application.')
@@ -150,17 +144,12 @@ export default function ConnectApplication() {
   }
 
   const rotateCredential = async (application: RegisteredApplication) => {
-    if (!adminCredential) {
-      setError('Enter the workspace administrator credential above before rotating a credential.')
-      return
-    }
     setProvisioning(true)
     setError('')
     try {
-      const result = await rotateApplicationCredential(application, adminCredential)
+      const result = await rotateApplicationCredential(application)
       const { observation_credential: token, ...updatedApplication } = result
       setIssuedCredential({ application: updatedApplication, token })
-      setAdminCredential('')
       setApplications(await getApplications())
       setConnectionNotice('A replacement credential was issued. Update your app host secret; the old credential has been invalidated.')
     } catch (reason) {
@@ -268,13 +257,13 @@ export default function ConnectApplication() {
           </details>}
           <section className="onboard-action">
             <h3>Register this application</h3>
-            <p className="answer">A workspace administrator must authorize registration. The administrator credential is sent securely for this request and is not saved in this page.</p>
+            <p className="answer">A signed-in workspace administrator must authorize registration. RAGGuard checks your server-managed session and tenant permissions.</p>
             <p className="answer">This guided registration provisions observation-only monitoring. It does not change your retrieval system or grant RAGGuard access to your index.</p>
             <label>
-              <span>Workspace administrator credential</span>
-              <input type="password" autoComplete="current-password" value={adminCredential} onChange={(event) => setAdminCredential(event.target.value)} />
+              <span>Administrator access</span>
+              <span>Your authenticated RAGGuard session is used for authorization.</span>
             </label>
-            <button className="primary" onClick={() => void registerApplication()} disabled={provisioning || !adminCredential || plan.knowledge_source !== 'observation_only'}>{provisioning ? 'Registering…' : 'Register and create observation credential'}</button>
+            <button className="primary" onClick={() => void registerApplication()} disabled={provisioning || plan.knowledge_source !== 'observation_only'}>{provisioning ? 'Registering…' : 'Register and create observation credential'}</button>
           </section>
           {issuedCredential && <section className="credential-once" role="status">
             <h3>Application registered · credential shown once</h3>
@@ -288,7 +277,7 @@ export default function ConnectApplication() {
           <ul className="checklist">
             {plan.checklist.map((item) => <li key={item}>{item}</li>)}
           </ul>
-          <p className="answer"><strong>Registration and credential:</strong> ask your RAGGuard workspace administrator to register the suggested application ID and create its observation credential. Put that credential in your app deployment's secret settings as <code>RAGGUARD_OBSERVATION_TOKEN</code>; do not paste it here or commit it to source control. This page cannot generate or display credentials yet. Repair permission stays off unless explicitly granted.</p>
+          <p className="answer"><strong>Registration and credential:</strong> a signed-in workspace administrator can register the suggested application ID and issue its observation credential. Put that credential in your app deployment's secret settings as <code>RAGGUARD_OBSERVATION_TOKEN</code>; do not commit it to source control. Repair permission stays off unless explicitly granted.</p>
           <h3>Security</h3>
           <ul className="checklist">
             {plan.security_notes.map((item) => <li key={item}>{item}</li>)}
