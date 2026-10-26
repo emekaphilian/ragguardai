@@ -22,6 +22,7 @@ class InMemoryAuthRepository:
         self._flows: dict[str, dict] = {}
         self._sessions: dict[str, dict] = {}
         self._memberships: dict[tuple[str, str, str], tuple[str, ...]] = {}
+        self._admin_bootstrap_complete = False
 
     def save_flow(self, state: str, record: dict) -> None:
         with self._lock:
@@ -58,6 +59,17 @@ class InMemoryAuthRepository:
     def revoke_membership(self, issuer: str, subject: str, tenant_id: str) -> None:
         with self._lock:
             self._memberships.pop((issuer, subject, tenant_id), None)
+
+    def bootstrap_admin_once(self, issuer: str, subject: str, tenant_id: str) -> bool:
+        with self._lock:
+            if self._admin_bootstrap_complete:
+                return False
+            self._memberships.setdefault(
+                (issuer, subject, tenant_id),
+                ("admin",),
+            )
+            self._admin_bootstrap_complete = True
+            return True
 
     def list_memberships(self, tenant_id: str) -> list[dict]:
         with self._lock:
@@ -150,6 +162,23 @@ class PostgreSQLAuthRepository:
                 "DELETE FROM tenant_memberships WHERE issuer=%s AND subject=%s AND tenant_id=%s",
                 (issuer, subject, tenant_id),
             )
+
+    def bootstrap_admin_once(self, issuer: str, subject: str, tenant_id: str) -> bool:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO auth_bootstrap_state (bootstrap_key) "
+                "VALUES ('oidc_admin') ON CONFLICT (bootstrap_key) DO NOTHING "
+                "RETURNING bootstrap_key"
+            )
+            if cursor.fetchone() is None:
+                return False
+            cursor.execute(
+                "INSERT INTO tenant_memberships (issuer, subject, tenant_id, roles) "
+                "VALUES (%s, %s, %s, '[\"admin\"]'::jsonb) "
+                "ON CONFLICT (issuer, subject, tenant_id) DO NOTHING",
+                (issuer, subject, tenant_id),
+            )
+            return True
 
     def list_memberships(self, tenant_id: str) -> list[dict]:
         with self._connect() as connection, connection.cursor() as cursor:

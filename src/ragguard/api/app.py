@@ -65,8 +65,7 @@ async def lifespan(_: FastAPI):
         issuer = settings.authentication.oidc_issuer
         subject = os.environ["RAGGUARD_OIDC_BOOTSTRAP_ADMIN_SUBJECT"].strip()
         tenant = os.environ["RAGGUARD_OIDC_BOOTSTRAP_ADMIN_TENANT"].strip()
-        if auth_repository.get_membership(issuer, subject, tenant) is None:
-            auth_repository.grant_membership(issuer, subject, tenant, ("admin",))
+        auth_repository.bootstrap_admin_once(issuer, subject, tenant)
     yield
 
 
