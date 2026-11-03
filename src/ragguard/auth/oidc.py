@@ -4,10 +4,15 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import ipaddress
 import secrets
+import socket
+import ssl
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode, urlparse
 
+import anyio
+import httpcore
 import httpx
 import jwt
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -20,16 +25,201 @@ router = APIRouter(prefix="/auth", tags=["authentication"])
 _STATE_COOKIE = "ragguard_oidc_state"
 
 
+class _AnyIONetworkStream(httpcore.AsyncNetworkStream):
+    def __init__(self, stream):
+        self._stream = stream
+
+    async def read(self, max_bytes, timeout=None):
+        try:
+            with anyio.fail_after(timeout):
+                return await self._stream.receive(max_bytes=max_bytes)
+        except anyio.EndOfStream:
+            return b""
+        except TimeoutError as exc:
+            raise httpcore.ReadTimeout("OIDC socket read timed out") from exc
+        except (OSError, anyio.BrokenResourceError, anyio.ClosedResourceError) as exc:
+            raise httpcore.ReadError("OIDC socket read failed") from exc
+
+    async def write(self, buffer, timeout=None):
+        if not buffer:
+            return
+        try:
+            with anyio.fail_after(timeout):
+                await self._stream.send(buffer)
+        except TimeoutError as exc:
+            raise httpcore.WriteTimeout("OIDC socket write timed out") from exc
+        except (OSError, anyio.BrokenResourceError, anyio.ClosedResourceError) as exc:
+            raise httpcore.WriteError("OIDC socket write failed") from exc
+
+    async def aclose(self):
+        await self._stream.aclose()
+
+    async def start_tls(self, ssl_context, server_hostname=None, timeout=None):
+        try:
+            with anyio.fail_after(timeout):
+                tls_stream = await anyio.streams.tls.TLSStream.wrap(
+                    self._stream,
+                    ssl_context=ssl_context,
+                    hostname=server_hostname,
+                    standard_compatible=False,
+                    server_side=False,
+                )
+        except TimeoutError as exc:
+            await self.aclose()
+            raise httpcore.ConnectTimeout("OIDC TLS handshake timed out") from exc
+        except (OSError, ssl.SSLError, anyio.BrokenResourceError, anyio.EndOfStream) as exc:
+            await self.aclose()
+            raise httpcore.ConnectError("OIDC TLS verification failed") from exc
+        return _AnyIONetworkStream(tls_stream)
+
+    def get_extra_info(self, info):
+        if info == "ssl_object":
+            return self._stream.extra(anyio.streams.tls.TLSAttribute.ssl_object, None)
+        if info == "client_addr":
+            return self._stream.extra(anyio.abc.SocketAttribute.local_address, None)
+        if info == "server_addr":
+            return self._stream.extra(anyio.abc.SocketAttribute.remote_address, None)
+        if info == "socket":
+            return self._stream.extra(anyio.abc.SocketAttribute.raw_socket, None)
+        return None
+
+
+class _AnyIONetworkBackend(httpcore.AsyncNetworkBackend):
+    async def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
+        try:
+            with anyio.fail_after(timeout):
+                stream = await anyio.connect_tcp(
+                    remote_host=host,
+                    remote_port=port,
+                    local_host=local_address,
+                )
+            raw_socket = stream.extra(anyio.abc.SocketAttribute.raw_socket, None)
+            for option in socket_options or ():
+                if raw_socket is None:
+                    raise OSError("TCP socket options are unavailable")
+                raw_socket.setsockopt(*option)
+        except TimeoutError as exc:
+            raise httpcore.ConnectTimeout("OIDC TCP connection timed out") from exc
+        except (OSError, anyio.BrokenResourceError, anyio.ClosedResourceError) as exc:
+            raise httpcore.ConnectError("OIDC TCP connection failed") from exc
+        return _AnyIONetworkStream(stream)
+
+    async def connect_unix_socket(self, path, timeout=None, socket_options=None):
+        raise httpcore.ConnectError("Unix sockets are disabled for OIDC")
+
+    async def sleep(self, seconds):
+        await anyio.sleep(seconds)
+
+
+class _SafeOIDCNetworkBackend(httpcore.AsyncNetworkBackend):
+    """Resolve, validate, and connect to the same IP while retaining TLS SNI."""
+
+    def __init__(self, network_backend=None, resolver=None):
+        self._network_backend = network_backend or _AnyIONetworkBackend()
+        self._resolver = resolver or anyio.getaddrinfo
+
+    async def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
+        try:
+            try:
+                addresses = [ipaddress.ip_address(host)]
+            except ValueError:
+                results = await self._resolver(host, port, type=socket.SOCK_STREAM)
+                addresses = [ipaddress.ip_address(result[4][0]) for result in results]
+            if not addresses or any(not address.is_global for address in addresses):
+                raise ValueError("non-public address")
+        except (OSError, TypeError, ValueError) as exc:
+            raise httpcore.ConnectError("OIDC endpoint resolved to an unsafe address") from exc
+
+        # httpcore still uses the request's original hostname for TLS SNI and
+        # certificate verification; only the TCP destination is pinned here.
+        return await self._network_backend.connect_tcp(
+            str(addresses[0]), port, timeout, local_address, socket_options
+        )
+
+    async def connect_unix_socket(self, path, timeout=None, socket_options=None):
+        return await self._network_backend.connect_unix_socket(path, timeout, socket_options)
+
+    async def sleep(self, seconds):
+        await self._network_backend.sleep(seconds)
+
+
+class _OIDCResponseStream(httpx.AsyncByteStream):
+    def __init__(self, stream):
+        self._stream = stream
+
+    async def __aiter__(self):
+        try:
+            async for chunk in self._stream:
+                yield chunk
+        except (httpcore.NetworkError, httpcore.ProtocolError, httpcore.TimeoutException) as exc:
+            raise httpx.TransportError("OIDC response could not be read safely") from exc
+
+    async def aclose(self):
+        try:
+            await self._stream.aclose()
+        except (httpcore.NetworkError, httpcore.ProtocolError, httpcore.TimeoutException) as exc:
+            raise httpx.TransportError("OIDC response could not be closed safely") from exc
+
+
+class _SafeOIDCTransport(httpx.AsyncBaseTransport):
+    """HTTPX adapter over a pooled HTTPCore client with validated connections."""
+
+    def __init__(self, *, network_backend=None, resolver=None, ssl_context=None):
+        self._pool = httpcore.AsyncConnectionPool(
+            ssl_context=ssl_context,
+            network_backend=_SafeOIDCNetworkBackend(network_backend, resolver),
+        )
+
+    async def handle_async_request(self, request):
+        core_request = httpcore.Request(
+            method=request.method,
+            url=httpcore.URL(
+                scheme=request.url.raw_scheme,
+                host=request.url.raw_host,
+                port=request.url.port,
+                target=request.url.raw_path,
+            ),
+            headers=request.headers.raw,
+            content=request.stream,
+            extensions=request.extensions,
+        )
+        try:
+            response = await self._pool.handle_async_request(core_request)
+        except (httpcore.NetworkError, httpcore.ProtocolError, httpcore.TimeoutException) as exc:
+            raise httpx.TransportError("OIDC provider connection failed safely") from exc
+        return httpx.Response(
+            status_code=response.status,
+            headers=response.headers,
+            stream=_OIDCResponseStream(response.stream),
+            extensions=response.extensions,
+        )
+
+    async def aclose(self):
+        try:
+            await self._pool.aclose()
+        except (httpcore.NetworkError, httpcore.ProtocolError, httpcore.TimeoutException) as exc:
+            raise httpx.TransportError("OIDC connection pool could not be closed safely") from exc
+
+
+def _oidc_http_client():
+    return httpx.AsyncClient(
+        timeout=10.0,
+        follow_redirects=False,
+        transport=_SafeOIDCTransport(),
+    )
+
+
 def _settings():
     settings = load_settings().authentication
     required = {
         "RAGGUARD_OIDC_ISSUER": settings.oidc_issuer,
         "RAGGUARD_OIDC_CLIENT_ID": settings.oidc_client_id,
-        "RAGGUARD_OIDC_CLIENT_SECRET": settings.oidc_client_secret,
         "RAGGUARD_OIDC_REDIRECT_URI": settings.oidc_redirect_uri,
         "RAGGUARD_FRONTEND_URL": settings.frontend_url,
         "RAGGUARD_SESSION_SECRET": settings.session_secret,
     }
+    if settings.oidc_token_auth_method != "none":
+        required["RAGGUARD_OIDC_CLIENT_SECRET"] = settings.oidc_client_secret
     missing = [name for name, value in required.items() if not value]
     if missing:
         raise HTTPException(status_code=503, detail="OIDC authentication is incompletely configured.")
@@ -39,9 +229,48 @@ def _settings():
 
 
 def _require_https_endpoint(value: str) -> None:
-    parsed = urlparse(value)
-    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+    try:
+        parsed = urlparse(value)
+        port = parsed.port or 443
+        addresses = {
+            ipaddress.ip_address(result[4][0])
+            for result in socket.getaddrinfo(
+                parsed.hostname,
+                port,
+                type=socket.SOCK_STREAM,
+            )
+        }
+    except (OSError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="OIDC provider endpoint could not be resolved safely.",
+        ) from exc
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or not addresses
+        or any(not address.is_global for address in addresses)
+    ):
         raise HTTPException(status_code=503, detail="OIDC provider metadata contains an unsafe endpoint.")
+
+
+def _discovery_url(issuer: str) -> str:
+    return f"{issuer.rstrip('/')}/.well-known/openid-configuration"
+
+
+def _validate_token_auth_method(metadata: dict, settings) -> None:
+    supported = metadata.get("token_endpoint_auth_methods_supported")
+    if supported is None:
+        supported = ["client_secret_basic"]
+    if not isinstance(supported, list) or settings.oidc_token_auth_method not in supported:
+        raise HTTPException(
+            status_code=503,
+            detail="The OIDC provider does not advertise the configured token authentication method.",
+        )
 
 
 def _allowed_return_to(value: str, settings) -> str:
@@ -79,9 +308,10 @@ async def login(request: Request, return_to: str | None = None):
     settings = _settings()
     target = _allowed_return_to(return_to or settings.frontend_url, settings)
     issuer = settings.oidc_issuer
-    async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
+    _require_https_endpoint(issuer)
+    async with _oidc_http_client() as client:
         try:
-            discovery_response = await client.get(f"{issuer}/.well-known/openid-configuration")
+            discovery_response = await client.get(_discovery_url(issuer))
             discovery_response.raise_for_status()
             metadata = discovery_response.json()
         except (httpx.HTTPError, ValueError) as exc:
@@ -89,6 +319,7 @@ async def login(request: Request, return_to: str | None = None):
     if metadata.get("issuer") != issuer:
         raise HTTPException(status_code=503, detail="OIDC discovery issuer did not match configuration.")
     _require_https_endpoint(metadata.get("authorization_endpoint", ""))
+    _validate_token_auth_method(metadata, settings)
     state = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(32)
     verifier = _b64url(secrets.token_bytes(48))
@@ -123,13 +354,15 @@ async def callback(request: Request, code: str | None = None, state: str | None 
     if not flow or flow["expires_at"] <= datetime.now(timezone.utc):
         raise HTTPException(status_code=401, detail="OIDC login expired. Please try again.")
     issuer = settings.oidc_issuer
-    async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
+    _require_https_endpoint(issuer)
+    async with _oidc_http_client() as client:
         try:
-            discovery_response = await client.get(f"{issuer}/.well-known/openid-configuration")
+            discovery_response = await client.get(_discovery_url(issuer))
             discovery_response.raise_for_status()
             metadata = discovery_response.json()
             if metadata.get("issuer") != issuer:
                 raise ValueError("issuer mismatch")
+            _validate_token_auth_method(metadata, settings)
             _require_https_endpoint(metadata.get("token_endpoint", ""))
             _require_https_endpoint(metadata.get("jwks_uri", ""))
             token_form = {
@@ -140,6 +373,9 @@ async def callback(request: Request, code: str | None = None, state: str | None 
             }
             if settings.oidc_token_auth_method == "client_secret_post":
                 token_form.update({"client_id": settings.oidc_client_id, "client_secret": settings.oidc_client_secret})
+                token_response = await client.post(metadata["token_endpoint"], data=token_form)
+            elif settings.oidc_token_auth_method == "none":
+                token_form["client_id"] = settings.oidc_client_id
                 token_response = await client.post(metadata["token_endpoint"], data=token_form)
             else:
                 token_form["client_id"] = settings.oidc_client_id

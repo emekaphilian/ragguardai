@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import os
 import math
-from urllib.parse import urlparse
+from typing import Literal
 from urllib.parse import urlparse
 import yaml
 
@@ -45,7 +45,11 @@ class AuthenticationSettings:
     oidc_issuer: str | None = None
     oidc_client_id: str | None = None
     oidc_client_secret: str | None = None
-    oidc_token_auth_method: str = "client_secret_basic"
+    oidc_token_auth_method: Literal[
+        "client_secret_basic",
+        "client_secret_post",
+        "none",
+    ] = "client_secret_basic"
     oidc_redirect_uri: str | None = None
     frontend_url: str | None = None
     session_secret: str | None = None
@@ -146,19 +150,6 @@ def _resolve_authentication_settings(data: dict) -> AuthenticationSettings:
             or (parsed_origin.scheme != "https" and not local_http)
         ):
             raise ValueError("RAGGUARD_FRONTEND_ORIGINS must contain exact HTTPS origins (localhost HTTP is allowed locally).")
-    for origin in frontend_origins:
-        parsed_origin = urlparse(origin)
-        local_http = parsed_origin.scheme == "http" and parsed_origin.hostname in {"localhost", "127.0.0.1"}
-        if (
-            origin == "*"
-            or parsed_origin.scheme not in {"https", "http"}
-            or not parsed_origin.netloc
-            or parsed_origin.path not in {"", "/"}
-            or parsed_origin.username
-            or parsed_origin.password
-            or (parsed_origin.scheme != "https" and not local_http)
-        ):
-            raise ValueError("RAGGUARD_FRONTEND_ORIGINS must contain exact HTTPS origins (localhost HTTP is allowed locally).")
     same_site = os.getenv("RAGGUARD_SESSION_COOKIE_SAMESITE", "lax").strip().lower()
     if same_site not in {"lax", "strict", "none"}:
         raise ValueError("RAGGUARD_SESSION_COOKIE_SAMESITE must be lax, strict, or none.")
@@ -169,8 +160,11 @@ def _resolve_authentication_settings(data: dict) -> AuthenticationSettings:
     if not 300 <= ttl <= 86400:
         raise ValueError("RAGGUARD_SESSION_TTL_SECONDS must be between 300 and 86400.")
     token_auth_method = os.getenv("RAGGUARD_OIDC_TOKEN_AUTH_METHOD", "client_secret_basic").strip().lower()
-    if token_auth_method not in {"client_secret_basic", "client_secret_post"}:
-        raise ValueError("RAGGUARD_OIDC_TOKEN_AUTH_METHOD must be client_secret_basic or client_secret_post.")
+    if token_auth_method not in {"client_secret_basic", "client_secret_post", "none"}:
+        raise ValueError(
+            "RAGGUARD_OIDC_TOKEN_AUTH_METHOD must be client_secret_basic, "
+            "client_secret_post, or none."
+        )
     return AuthenticationSettings(
         mode=mode,
         oidc_issuer=(os.getenv("RAGGUARD_OIDC_ISSUER") or "").strip() or None,

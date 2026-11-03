@@ -38,10 +38,17 @@ async def lifespan(_: FastAPI):
     backend = selected_persistence_backend()
     if settings.authentication.mode == "oidc":
         auth = settings.authentication
-        required = (auth.oidc_issuer, auth.oidc_client_id, auth.oidc_client_secret,
-                    auth.oidc_redirect_uri, auth.frontend_url, auth.session_secret)
+        required = (
+            auth.oidc_issuer,
+            auth.oidc_client_id,
+            auth.oidc_redirect_uri,
+            auth.frontend_url,
+            auth.session_secret,
+        )
+        if auth.oidc_token_auth_method != "none":
+            required += (auth.oidc_client_secret,)
         if any(not value for value in required):
-            raise RuntimeError("OIDC mode requires issuer, client credentials, redirect URI, frontend URL, and session secret.")
+            raise RuntimeError("OIDC mode requires issuer, client ID, redirect URI, frontend URL, and session secret.")
         if len(auth.session_secret or "") < 32:
             raise RuntimeError("RAGGUARD_SESSION_SECRET must contain at least 32 characters.")
         if backend not in {"postgres", "postgresql"}:
