@@ -109,7 +109,7 @@ class ObservationRecoveryService:
             available_repairs=self.available_repairs,
             event_bus=self.event_bus,
         )
-        result = graph.invoke(state)
+        result = graph.invoke(vars(state))
         audit = result.get("recovery_audit") if isinstance(result, dict) else None
         if audit is not None:
             self.recovery_repository.save(audit)

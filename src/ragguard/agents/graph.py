@@ -525,7 +525,7 @@ def run_sequential(
         max_repair_attempts=max_repair_attempts,
     )
     final_values = graph.invoke(
-        state,
+        vars(state),
         config={"recursion_limit": max(25, max_repair_attempts * 8 + 12)},
     )
     if isinstance(final_values, dict):

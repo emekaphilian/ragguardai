@@ -86,7 +86,7 @@ def test_langgraph_healthy_retrieval_ends_without_repair():
         answer,
     )
 
-    result = graph.invoke(state)
+    result = graph.invoke(vars(state))
 
     assert result["status"] == "healthy"
     assert result["failure_event"] is None
@@ -97,7 +97,7 @@ def test_langgraph_healthy_retrieval_ends_without_repair():
 def test_langgraph_deduplicates_and_promotes_improved_retrieval():
     graph, state = build_duplicate_graph()
 
-    result = graph.invoke(state)
+    result = graph.invoke(vars(state))
 
     assert result["status"] == "promoted"
     assert result["failure_event"].failure_type.value == "DUPLICATE_CONTEXT"
@@ -271,7 +271,7 @@ def test_first_repair_fails_then_rerank_succeeds_after_rollback():
     repair_engine = FailHybridThenRerankEngine()
     graph, state, original_retrieval = build_low_recall_graph(repair_engine)
 
-    result = graph.invoke(state)
+    result = graph.invoke(vars(state))
 
     assert result["attempted_repairs"] == [
         RepairType.HYBRID_RETRIEVAL,
@@ -292,7 +292,7 @@ def test_langgraph_rolls_back_a_worse_repair():
     graph, state = build_duplicate_graph(WorseRepairEngine())
     original_retrieval = state.retrieval_result
 
-    result = graph.invoke(state)
+    result = graph.invoke(vars(state))
 
     assert result["status"] == "escalated"
     assert result["repair_result"].repair_type == RepairType.DEDUPLICATE
@@ -311,7 +311,7 @@ class RaisingRepairEngine:
 def test_langgraph_audits_repair_execution_errors_and_escalates():
     graph, state = build_duplicate_graph(RaisingRepairEngine())
 
-    result = graph.invoke(state)
+    result = graph.invoke(vars(state))
 
     assert result["status"] == "escalated"
     assert result["repair_result"] is None
@@ -341,7 +341,7 @@ def test_langgraph_rolls_back_and_audits_validation_errors():
     graph, state = build_duplicate_graph(RaisingValidationEngine())
     original_retrieval = state.retrieval_result
 
-    result = graph.invoke(state)
+    result = graph.invoke(vars(state))
 
     assert result["status"] == "escalated"
     assert result["validation_result"].valid is False
@@ -364,7 +364,7 @@ def test_failure_runs_diagnosis_then_escalates_without_repair_budget():
         max_repair_attempts=0,
     )
 
-    result = graph.invoke(state)
+    result = graph.invoke(vars(state))
 
     assert result["failure_event"] is not None
     assert result["diagnosis"] is not None
@@ -377,7 +377,7 @@ def test_repeated_repair_is_blocked_and_escalated():
     graph, state = build_duplicate_graph()
     state.attempted_repairs = [RepairType.DEDUPLICATE]
 
-    result = graph.invoke(state)
+    result = graph.invoke(vars(state))
 
     assert result["status"] == "escalated"
     assert result["repair_result"] is None
@@ -402,7 +402,7 @@ def test_maximum_attempts_escalates_after_rollback():
     )
     original_retrieval = state.retrieval_result
 
-    result = graph.invoke(state)
+    result = graph.invoke(vars(state))
 
     assert result["status"] == "escalated"
     assert len(result["attempted_repairs"]) == 1
@@ -427,7 +427,7 @@ def test_all_failed_permitted_repairs_escalate_after_rollback():
         WorseRepairEngine(), VectorStore(), Evaluator(), {"relevant"},
         "Refunds are available within 30 days.", max_repair_attempts=3,
     )
-    result = graph.invoke(state)
+    result = graph.invoke(vars(state))
 
     assert result["status"] == "escalated"
     assert result["attempted_repairs"] == [
@@ -508,7 +508,7 @@ def test_stage_2_three_failed_repairs_rollback_then_escalate():
     )
     original_retrieval = state.retrieval_result
 
-    result = graph.invoke(state)
+    result = graph.invoke(vars(state))
 
     assert result["status"] == "escalated"
     assert result["attempted_repairs"] == [
@@ -547,7 +547,7 @@ def test_unsupported_policy_repair_escalates_without_execution():
         RepairEngine(), VectorStore(), Evaluator(), {"relevant"},
         "Refunds are available within 30 days.",
     )
-    result = graph.invoke(state)
+    result = graph.invoke(vars(state))
 
     assert result["status"] == "escalated"
     assert result["repair_result"] is None
