@@ -1,7 +1,7 @@
 # RAGGuardAI — Release Readiness Verification and Evidence Report
 
 **Verification date:** 2026-11-22
-**Release candidate:** `7e64383c833162693ebb3bef9b793cf1f712b4c6`
+**Release candidate:** `90b05a52314412c52d7db6345aa9d1a6a13b3879`
 **Branch:** `production-foundation`
 **Decision:** **NOT READY**
 
@@ -11,15 +11,18 @@ that a production behavior passed.
 
 ## 1. Executive release decision
 
-**NOT READY.** The local Python and frontend checks pass, but the PostgreSQL
-integration tests were skipped locally. The pushed GitHub Actions run concluded
-`failure` without executing any runner time or providing usable job logs. No
-staging deployment, live OIDC verification, or deployed multi-worker test has
-been demonstrated.
+**NOT READY.** The local PostgreSQL integration tests remain skipped because
+there is no local database engine or test database URL. GitHub Actions runs #19
+and #20 concluded `failure` before runner allocation. Their job annotations
+identify the cause as an account billing lock; no test steps ran. No staging
+deployment, live OIDC verification, or deployed multi-worker test has been
+demonstrated. After dependency remediation, the local full Python suite and
+the dependency audit pass; the two PostgreSQL tests remain skipped.
 
-No release gate is marked `PASS`. The failure of the Actions run is recorded as
-an execution/evidence blocker, not as proof of an application defect: all five
-jobs report zero runtime and the downloadable log archive is empty.
+No release gate is marked `PASS`. The failed Actions runs are recorded as an
+account-billing execution blocker, not as proof of an application defect: all
+five jobs in each run have no runner assignment or steps, and the unauthenticated
+log archive requests returned HTTP 403.
 
 ## 2. Release candidate identification
 
@@ -27,14 +30,13 @@ jobs report zero runtime and the downloadable log archive is empty.
 |---|---|
 | Repository | `emekaphilian/ragguardai` |
 | Branch | `production-foundation` |
-| Candidate commit | [`7e64383`](https://github.com/emekaphilian/ragguardai/commit/7e64383c833162693ebb3bef9b793cf1f712b4c6) |
+| Candidate commit | [`90b05a5`](https://github.com/emekaphilian/ragguardai/commit/90b05a52314412c52d7db6345aa9d1a6a13b3879) |
 | Commit subject | `fix: pass graph state mappings to LangGraph` |
 | Verification date | 2026-11-22 |
 
 The candidate commit and its release-readiness foundation commit are pushed to
-the branch. The candidate commit changes LangGraph invocation inputs from a
-dataclass instance to a mapping; the local full Python suite passes after this
-change.
+the branch. Commit `7e64383` changes LangGraph invocation inputs from a dataclass
+instance to a mapping; the local full Python suite passed after this change.
 
 ## 3. System architecture and deployment topology
 
@@ -57,14 +59,23 @@ CI is configured for PostgreSQL 16. The staging Blueprint requests PostgreSQL
 - The CI workflow defines a PostgreSQL 16 service and sets
   `RAGGUARD_TEST_DATABASE_URL` in the test job
   ([CI workflow](../.github/workflows/ci.yml)).
-- Local `python -m pytest -q` completed with **221 passed, 2 skipped**. The
+- After the dependency remediation recorded in section 11, the local full
+  Python suite on Python 3.11 completed with **221 passed, 2 skipped**. The
   skipped cases are the PostgreSQL workspace/concurrency and backup/restore
   integration tests; no database URL, PostgreSQL client utilities, or running
   Docker daemon was available.
 - GitHub Actions run [#19](https://github.com/emekaphilian/ragguardai/actions/runs/45039018782)
-  concluded `failure`. All five jobs report `0 ms` runner duration. Per-job logs
-  were unavailable and the run-log archive was empty. Therefore this run does
-  not establish migration or persistence behavior.
+  and run [#20](https://github.com/emekaphilian/ragguardai/actions/runs/45040212445)
+  both concluded `failure` within seconds of starting. The public check-run
+  annotations for every job state: “The job was not started because your
+  account is locked due to a billing issue.” Job records show no runner ID/name
+  and no steps; therefore neither run executed tests. Unauthenticated log
+  archive requests returned HTTP 403. The workflow configuration is not
+  implicated by these runs; account billing is the verified blocker.
+- Re-running the two requested PostgreSQL integration test files locally
+  completed with **2 skipped**: no `RAGGUARD_TEST_DATABASE_URL` was configured.
+  Docker Desktop is absent (only a Docker CLI shim is present), and PostgreSQL
+  server/client utilities are not installed. No PostgreSQL test executed.
 
 **Result:** no successful execution against PostgreSQL is evidenced.
 
@@ -121,10 +132,41 @@ exercise shared database visibility, but it was skipped locally. No deployed
 API worker pool, cross-worker session/activity test, or worker restart under
 traffic has been verified.
 
-## 11. Known limitations and unresolved risks
+## 11. Dependency security remediation
 
-1. The GitHub Actions run for the candidate commit failed before usable job
-   execution evidence was produced; its logs are unavailable.
+- `langgraph` and `pytest` were direct requirements. `langgraph-checkpoint` and
+  `langgraph-sdk` were transitive dependencies of LangGraph. Both are now
+  explicitly constrained in `requirements.txt` and `pyproject.toml` so their
+  patched lower bounds are visible and resolver-enforced.
+- The selected bounds are `langgraph>=1.2.24,<2`,
+  `langgraph-checkpoint>=4.3.0,<5`, `langgraph-sdk>=0.4.6,<0.5`, and
+  `pytest>=9.0.3,<10`. A package-index resolver check confirmed LangGraph
+  1.2.24 requires checkpoint `>=4.3.0,<5` and SDK `>=0.4.6,<0.5`. The local
+  resolver installed LangGraph 1.2.24, checkpoint 4.3.2, SDK 0.4.14, and
+  pytest 9.2.0.
+- Before remediation, the complete `pip-audit` JSON reported **11 finding
+  records across four packages** (pytest, langgraph, langgraph-checkpoint, and
+  langgraph-sdk). Counting canonical IDs gives seven distinct PYSEC IDs and
+  six distinct GHSA IDs; repeated records and overlapping aliases account for
+  multiple rows. The earlier statement of eight distinct advisory IDs is not
+  supported by this raw JSON under either canonical-ID count.
+- After remediation, `pip-audit -r requirements.txt` reported **no known
+  vulnerabilities**, with no suppression file or ignored finding. `pip check`
+  reported no broken requirements.
+- Regression evidence on the upgraded dependency set: full suite **221 passed,
+  2 skipped**; LangGraph repair, observation/recovery, and recovery-audit tests
+  **25 passed**; each of the three OIDC compatibility targets **53 passed**.
+  The two skipped cases are PostgreSQL integration tests, not LangGraph tests.
+- No Python dependency lock file exists to regenerate. The existing
+  `frontend/package-lock.json` is unrelated and unchanged. The CircleCI
+  `dependency-audit` job remains in `.circleci/config.yml`, and the GitHub
+  security workflow remains configured to run `pip-audit -r requirements.txt`.
+
+## 12. Known limitations and unresolved risks
+
+1. GitHub Actions is blocked because the account is locked due to a billing
+   issue. Runs #19 and #20 had no runner assignment or executed steps; log
+   archives are not available without authenticated access.
 2. PostgreSQL persistence, transaction, concurrency, and backup/restore tests
    remain unexecuted.
 3. Live staging is unavailable at the configured health URL; Render CLI
@@ -133,12 +175,12 @@ traffic has been verified.
    for staging.
 5. PostgreSQL 16 in CI and PostgreSQL 18 in the staging Blueprint have not been
    shown to be compatible by executed integration evidence.
-6. Local Python verification used Python 3.14; CI is configured for Python 3.11.
-   The CI run did not provide evidence for that runtime.
+6. The local full-suite verification now uses Python 3.11, but GitHub Actions
+   has not executed its Python 3.11 job because of the account billing lock.
 7. The Render API uses a free web-service plan that may spin down; its suitability
    for any production SLO has not been assessed.
 
-## 12. Gate-by-gate acceptance results
+## 13. Gate-by-gate acceptance results
 
 Statuses: `PASS` requires successful execution and traceable evidence; `FAIL`
 requires an executed verification that exposed a defect; `BLOCKED` means a
@@ -147,7 +189,7 @@ attempt was made.
 
 | Gate | Verification | Status | Evidence / outstanding requirement |
 |---|---|---|---|
-| G1 | PostgreSQL foundation | **BLOCKED** | CI run failed with zero runner time and no job logs; local PostgreSQL integration tests skipped. Obtain a successful PostgreSQL CI run with logs. |
+| G1 | PostgreSQL foundation | **BLOCKED** | Runs #19/#20 were stopped before runner allocation by the account billing lock; local PostgreSQL tests skipped. Resolve account billing and obtain an executed PostgreSQL CI run. |
 | G2 | Application isolation | **BLOCKED** | Local tests pass; three-app PostgreSQL and deployed cross-worker scenarios are unverified. |
 | G3 | Transactional reliability | **BLOCKED** | Local reliability tests pass; PostgreSQL rollback and concurrency scenario did not execute. |
 | G4 | Data recovery | **BLOCKED** | Backup/restore test skipped; no successful backup and restore evidence. |
@@ -155,7 +197,7 @@ attempt was made.
 | G6 | Identity and authorization | **BLOCKED** | Local tests pass; no live OIDC session, tenant/application grant, or repair-authorization evidence. |
 | G7 | Distributed operation | **BLOCKED** | No PostgreSQL multi-worker test result or deployed multi-worker verification. |
 
-## 13. Final release recommendation and sign-off
+## 14. Final release recommendation and sign-off
 
 **Recommendation: do not promote to production.** The evidence currently supports
 only local test-suite results, not a staging-verified release candidate.
