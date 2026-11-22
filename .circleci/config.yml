@@ -1,0 +1,142 @@
+version: 2.1
+
+jobs:
+  python-tests:
+    docker:
+      - image: cimg/python:3.11
+      - image: postgres:16
+        name: postgres
+        environment:
+          POSTGRES_DB: ragguard_test
+          POSTGRES_USER: ragguard
+          POSTGRES_PASSWORD: ragguard_test
+    environment:
+      RAGGUARD_TEST_DATABASE_URL: postgresql://ragguard:ragguard_test@postgres:5432/ragguard_test
+    steps:
+      - checkout
+      - run:
+          name: Install PostgreSQL backup utilities
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y ca-certificates curl gnupg lsb-release
+            sudo install -d /usr/share/keyrings
+            curl --fail --silent --show-error https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor | sudo tee /usr/share/keyrings/postgresql.gpg >/dev/null
+            echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client-16
+            echo 'export PATH=/usr/lib/postgresql/16/bin:"$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Wait for PostgreSQL
+          command: |
+            for attempt in $(seq 1 60); do
+              if pg_isready -h postgres -U ragguard -d ragguard_test; then
+                exit 0
+              fi
+              sleep 1
+            done
+            echo "PostgreSQL did not become ready within 60 seconds" >&2
+            exit 1
+      - restore_cache:
+          keys:
+            - v1-pip-{{ checksum "requirements.txt" }}-python-tests
+            - v1-pip-
+      - run:
+          name: Install Python dependencies
+          command: python -m pip install -r requirements.txt
+      - save_cache:
+          key: v1-pip-{{ checksum "requirements.txt" }}-python-tests
+          paths:
+            - ~/.cache/pip
+      - run:
+          name: Run Python tests
+          command: python -m pytest -q
+      - run:
+          name: Run pipeline smoke test
+          command: python scripts/run_pipeline.py
+
+  oidc-transport-tests:
+    parameters:
+      httpx_spec:
+        type: string
+      httpcore_spec:
+        type: string
+    docker:
+      - image: cimg/python:3.11
+    steps:
+      - checkout
+      - run:
+          name: Install project dependencies
+          command: python -m pip install -r requirements.txt
+      - run:
+          name: Select HTTPX and HTTPCore compatibility targets
+          command: >-
+            python -m pip install --upgrade
+            '<< parameters.httpx_spec >>'
+            '<< parameters.httpcore_spec >>'
+      - run:
+          name: Report HTTPX and HTTPCore versions
+          command: python -m pip show httpx httpcore
+      - run:
+          name: Run OIDC transport and authentication tests
+          command: >-
+            python -m pytest -q
+            tests/api/test_oidc_transport.py
+            tests/api/test_oidc_authentication.py
+            tests/api/test_middleware_tenant_default.py
+            tests/unit/test_auth_repository.py
+            tests/unit/test_authentication_config.py
+            tests/unit/test_admin_session_authorization.py
+            tests/unit/test_principal_authorization.py
+
+  frontend-build:
+    docker:
+      - image: cimg/node:20.0
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - v1-npm-{{ checksum "frontend/package-lock.json" }}
+            - v1-npm-
+      - run:
+          name: Install frontend dependencies
+          command: npm ci
+          working_directory: frontend
+      - save_cache:
+          key: v1-npm-{{ checksum "frontend/package-lock.json" }}
+          paths:
+            - frontend/node_modules
+      - run:
+          name: Build frontend
+          command: npm run build
+          working_directory: frontend
+
+  dependency-audit:
+    docker:
+      - image: cimg/python:3.11
+    steps:
+      - checkout
+      - run:
+          name: Install pip-audit
+          command: python -m pip install pip-audit
+      - run:
+          name: Audit Python dependencies
+          command: pip-audit -r requirements.txt
+
+workflows:
+  ragguard-ci:
+    jobs:
+      - python-tests
+      - oidc-transport-tests:
+          name: OIDC transport (httpx-0.27.2)
+          httpx_spec: httpx==0.27.2
+          httpcore_spec: "httpcore>=1.0.9,<2"
+      - oidc-transport-tests:
+          name: OIDC transport (httpx-0.28.1)
+          httpx_spec: httpx==0.28.1
+          httpcore_spec: "httpcore>=1.0.9,<2"
+      - oidc-transport-tests:
+          name: OIDC transport (latest-supported-httpx-0.x)
+          httpx_spec: "httpx>=0.27,<1"
+          httpcore_spec: "httpcore>=1.0.9,<2"
+      - frontend-build
+      - dependency-audit
