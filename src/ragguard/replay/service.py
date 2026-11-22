@@ -5,6 +5,7 @@ from dataclasses import replace
 from uuid import uuid4
 
 from ragguard.api.recovery_service import ObservationRecoveryService
+from ragguard.auth.application_access import application_is_allowed
 from ragguard.auth.tenant_context import TenantContext
 from ragguard.diagnosis.diagnostic_agent import diagnose
 from ragguard.detection.live_detector import LiveFailureDetector
@@ -45,6 +46,11 @@ class RecoveryReplayService:
         if (
             original is None
             or original.ragguard_tenant_id != context.tenant_id
+            or not application_is_allowed(
+                context,
+                original.application_id or "",
+                original.environment,
+            )
         ):
             raise ReplayNotFoundError("Recovery record not found.")
 

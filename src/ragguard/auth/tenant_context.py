@@ -21,3 +21,6 @@ class TenantContext:
     vector_namespace: str
     policy_version: str
     index_version: str
+    # None means platform-wide tenant access (trusted service/dev context).
+    # OIDC users receive explicit (application, environment, roles) grants.
+    application_memberships: tuple[tuple[str, str, tuple[str, ...]], ...] | None = None

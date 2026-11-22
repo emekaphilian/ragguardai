@@ -22,6 +22,9 @@ class InMemoryAuthRepository:
         self._flows: dict[str, dict] = {}
         self._sessions: dict[str, dict] = {}
         self._memberships: dict[tuple[str, str, str], tuple[str, ...]] = {}
+        self._application_memberships: dict[
+            tuple[str, str, str, str, str], tuple[str, ...]
+        ] = {}
         self._admin_bootstrap_complete = False
 
     def save_flow(self, state: str, record: dict) -> None:
@@ -78,6 +81,66 @@ class InMemoryAuthRepository:
                 for (issuer, subject, tenant), roles in self._memberships.items()
                 if tenant == tenant_id
             ]
+
+    def grant_application_membership(
+        self,
+        issuer: str,
+        subject: str,
+        tenant_id: str,
+        application_id: str,
+        environment: str,
+        roles: tuple[str, ...],
+    ) -> None:
+        key = (issuer, subject, tenant_id, application_id, environment)
+        with self._lock:
+            self._application_memberships[key] = tuple(sorted(set(roles)))
+
+    def list_application_memberships(
+        self,
+        tenant_id: str,
+        *,
+        issuer: str | None = None,
+        subject: str | None = None,
+        application_id: str | None = None,
+        environment: str | None = None,
+    ) -> list[dict]:
+        with self._lock:
+            memberships = list(self._application_memberships.items())
+        result = []
+        for (item_issuer, item_subject, item_tenant, item_app, item_environment), roles in memberships:
+            if item_tenant != tenant_id:
+                continue
+            if issuer is not None and item_issuer != issuer:
+                continue
+            if subject is not None and item_subject != subject:
+                continue
+            if application_id is not None and item_app != application_id:
+                continue
+            if environment is not None and item_environment != environment:
+                continue
+            result.append({
+                "issuer": item_issuer,
+                "subject": item_subject,
+                "tenant_id": item_tenant,
+                "application_id": item_app,
+                "environment": item_environment,
+                "roles": list(roles),
+            })
+        return sorted(result, key=lambda item: (
+            item["application_id"], item["environment"], item["subject"]
+        ))
+
+    def revoke_application_membership(
+        self,
+        issuer: str,
+        subject: str,
+        tenant_id: str,
+        application_id: str,
+        environment: str,
+    ) -> None:
+        key = (issuer, subject, tenant_id, application_id, environment)
+        with self._lock:
+            self._application_memberships.pop(key, None)
 
 
 class PostgreSQLAuthRepository:
@@ -192,6 +255,88 @@ class PostgreSQLAuthRepository:
              "roles": row[2] if isinstance(row[2], (list, tuple)) else json.loads(row[2])}
             for row in rows
         ]
+
+    def grant_application_membership(
+        self,
+        issuer: str,
+        subject: str,
+        tenant_id: str,
+        application_id: str,
+        environment: str,
+        roles: tuple[str, ...],
+    ) -> None:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO application_memberships "
+                "(issuer, subject, ragguard_tenant_id, application_id, environment, roles) "
+                "VALUES (%s, %s, %s, %s, %s, %s::jsonb) "
+                "ON CONFLICT (issuer, subject, ragguard_tenant_id, application_id, environment) "
+                "DO UPDATE SET roles=EXCLUDED.roles, updated_at=now()",
+                (
+                    issuer,
+                    subject,
+                    tenant_id,
+                    application_id,
+                    environment,
+                    json.dumps(sorted(set(roles))),
+                ),
+            )
+
+    def list_application_memberships(
+        self,
+        tenant_id: str,
+        *,
+        issuer: str | None = None,
+        subject: str | None = None,
+        application_id: str | None = None,
+        environment: str | None = None,
+    ) -> list[dict]:
+        filters = ["ragguard_tenant_id=%s"]
+        parameters: list[str] = [tenant_id]
+        for column, value in (
+            ("issuer", issuer),
+            ("subject", subject),
+            ("application_id", application_id),
+            ("environment", environment),
+        ):
+            if value is not None:
+                filters.append(f"{column}=%s")
+                parameters.append(value)
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT issuer, subject, ragguard_tenant_id, application_id, "
+                "environment, roles FROM application_memberships WHERE "
+                + " AND ".join(filters)
+                + " ORDER BY application_id, environment, subject",
+                tuple(parameters),
+            )
+            rows = cursor.fetchall()
+        return [
+            {
+                "issuer": row[0],
+                "subject": row[1],
+                "tenant_id": row[2],
+                "application_id": row[3],
+                "environment": row[4],
+                "roles": row[5] if isinstance(row[5], (list, tuple)) else json.loads(row[5]),
+            }
+            for row in rows
+        ]
+
+    def revoke_application_membership(
+        self,
+        issuer: str,
+        subject: str,
+        tenant_id: str,
+        application_id: str,
+        environment: str,
+    ) -> None:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM application_memberships WHERE issuer=%s AND subject=%s "
+                "AND ragguard_tenant_id=%s AND application_id=%s AND environment=%s",
+                (issuer, subject, tenant_id, application_id, environment),
+            )
 
 
 def create_auth_repository(*, backend: str | None = None, database_url: str | None = None):

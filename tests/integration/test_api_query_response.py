@@ -89,8 +89,8 @@ def test_repair_route_requires_application_repair_authorization(
     applications = InMemoryApplicationRepository()
     applications.upsert(ApplicationRegistration(
         ragguard_tenant_id="development",
-        application_id="trustassist",
-        display_name="TrustAssist",
+        application_id="ragguard",
+        display_name="RAGGuard",
         environment="development",
         knowledge_source="managed_index",
         vector_namespace="development",
@@ -127,8 +127,8 @@ def test_repair_route_uses_repair_engine_validation(client, monkeypatch):
     applications = InMemoryApplicationRepository()
     applications.upsert(ApplicationRegistration(
         ragguard_tenant_id="development",
-        application_id="trustassist",
-        display_name="TrustAssist",
+        application_id="ragguard",
+        display_name="RAGGuard",
         environment="development",
         knowledge_source="managed_index",
         vector_namespace="development",

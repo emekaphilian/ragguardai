@@ -103,6 +103,55 @@ def test_applications_endpoint_lists_only_current_tenant_and_public_fields(monke
     assert connected["repair_authorized"] is False
 
 
+def test_applications_endpoint_hides_registrations_without_app_grants(monkeypatch):
+    repository = InMemoryApplicationRepository()
+    for application_id, display_name in (("trustassist", "TrustAssist"), ("biomedicalrag", "BiomedicalRag")):
+        repository.upsert(ApplicationRegistration(
+            ragguard_tenant_id="tenant-a",
+            application_id=application_id,
+            display_name=display_name,
+            environment="production",
+            knowledge_source="observation_only",
+        ))
+    monkeypatch.setattr(application_routes, "application_repository", repository)
+    monkeypatch.setattr(application_routes, "observation_repository", InMemoryObservationRepository())
+    restricted = replace(
+        tenant_context(),
+        application_memberships=(("biomedicalrag", "production", ("admin",)),),
+    )
+    monkeypatch.setattr("ragguard.api.app.resolve_request_context", lambda request: restricted)
+
+    response = client.get("/api/v1/applications")
+
+    assert response.status_code == 200
+    assert [item["application_id"] for item in response.json()] == ["biomedicalrag"]
+
+
+def test_query_request_cannot_override_into_an_ungranted_application(monkeypatch):
+    repository = InMemoryApplicationRepository()
+    for application_id, namespace in (("trustassist", "trustassist-prod"), ("biomedicalrag", "biomedicalrag-prod")):
+        repository.upsert(ApplicationRegistration(
+            ragguard_tenant_id="tenant-a", application_id=application_id,
+            display_name=application_id, environment="production",
+            knowledge_source="managed_index", vector_namespace=namespace,
+        ))
+    monkeypatch.setattr(retrieval_routes, "application_repository", repository)
+    restricted = replace(
+        tenant_context(),
+        application_memberships=(("biomedicalrag", "production", ("reader",)),),
+    )
+    monkeypatch.setattr("ragguard.api.app.resolve_request_context", lambda request: restricted)
+
+    response = client.post("/api/v1/query", json={
+        "query": "confidential application content",
+        "application_id": "trustassist",
+        "environment": "production",
+        "method": "vector",
+    })
+    assert response.status_code == 404
+    assert "not registered" in response.json()["detail"]
+
+
 def test_external_query_is_blocked_without_independent_verification_capability(
     monkeypatch,
 ):

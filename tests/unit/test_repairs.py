@@ -3,6 +3,7 @@ from ragguard.common.schemas import Chunk, EvaluationResult, RepairResult, Retri
 from ragguard.repair.repair_policy import choose_repair
 from ragguard.repair.repair_engine import RepairEngine
 from ragguard.repair.deduplicate import deduplicate, retrieval_stats
+from ragguard.storage.vector_store import VectorStore
 
 class Diagnosis:
     recommended_repairs = [RepairType.RECHUNK, RepairType.HYBRID_RETRIEVAL]
@@ -79,3 +80,34 @@ def test_repair_engine_validation_detects_no_improvement():
     assert validation.valid is True
     assert validation.improved is False
     assert validation.score_delta == 0.0
+
+
+def test_rejected_repair_leaves_source_index_unchanged():
+    store = VectorStore()
+    chunks = [
+        Chunk(chunk_id="dup-a", document_id="a", text="Refund request general information."),
+        Chunk(chunk_id="dup-b", document_id="b", text="Refund request general information."),
+        Chunk(chunk_id="policy", document_id="policy", text="Refunds are available within 30 days."),
+    ]
+    store.add(chunks, namespace="tenant-app")
+    original = [(item.chunk_id, item.text, dict(item.metadata)) for item in store.chunks]
+    query = "refund request deadline"
+    answer = "Refunds are available within 30 days."
+    before_retrieval = store.search(query, top_k=2, namespace="tenant-app")
+    before_metrics = EvaluationResult(
+        context_precision=0.5, context_recall=0.5, faithfulness=0.5,
+        answer_relevancy=0.5, overall_score=0.5,
+    )
+
+    class RejectingEvaluator:
+        def evaluate(self, *args, **kwargs):
+            return before_metrics
+
+    evaluator = RejectingEvaluator()
+    result = RepairEngine().execute(
+        RepairType.DEDUPLICATE, store, query, before_metrics, {"policy"}, evaluator,
+        answer, before_retrieval=before_retrieval, top_k=2, namespace="tenant-app",
+    )
+    assert result.improvement == 0
+    assert RepairEngine().validate(result).improved is False
+    assert [(item.chunk_id, item.text, dict(item.metadata)) for item in store.chunks] == original

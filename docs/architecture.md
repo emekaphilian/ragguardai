@@ -22,6 +22,10 @@ OBSERVE
 
 The vector store is an adapter. Core evaluation, detection, diagnosis and policy code do not depend on a specific vector database.
 
+Managed documents use the configured workspace repository. PostgreSQL deployments persist document bodies, recycle state, and workspace run/failure/repair activity in shared tables. The API refuses to start in staging or production with the in-memory backend. Document identity is `(ragguard_tenant_id, application_id, environment, document_id)`; vector statistics are fitted independently for each configured vector namespace. Separate application registrations should use separate namespaces when retrieval isolation is required.
+
+The bundled TF-IDF implementation is a local retrieval proxy. Dashboard fields such as `term_match`, `source_coverage`, and `overall_quality` are explicitly labeled as proxies and should not be interpreted as labeled relevance or citation metrics.
+
 Agents are thin wrappers around those services.
 
 ## Reliability workflow orchestration

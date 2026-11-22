@@ -30,6 +30,15 @@ class TenantMembershipRequest(BaseModel):
     roles: list[str] = Field(default_factory=list)
 
 
+class ApplicationMembershipRequest(BaseModel):
+    issuer: str = Field(min_length=1, max_length=512)
+    subject: str = Field(min_length=1, max_length=512)
+    tenant_id: str = Field(min_length=1, max_length=200)
+    application_id: str = Field(min_length=1, max_length=100)
+    environment: str = Field(min_length=1, max_length=80)
+    roles: list[str] = Field(default_factory=lambda: ["reader"])
+
+
 def _require_admin(
     authorization: str | None,
     request: Request | None = None,
@@ -57,6 +66,50 @@ def _require_admin(
     if not admin_token:
         raise HTTPException(status_code=503, detail="Administrative access is not configured.")
     raise HTTPException(status_code=401, detail="Invalid administrator credential.")
+
+
+def _require_application_admin(
+    authorization: str | None,
+    request: Request,
+    tenant_id: str,
+    application_id: str,
+    environment: str,
+) -> None:
+    """Allow a platform admin or this application's own administrator."""
+    admin_token = os.getenv("RAGGUARD_ADMIN_TOKEN")
+    scheme, _, supplied_token = (authorization or "").partition(" ")
+    if admin_token and scheme.lower() == "bearer" and supplied_token and compare_digest(supplied_token, admin_token):
+        return
+
+    settings = load_settings()
+    if settings.authentication.mode != "oidc":
+        if admin_token:
+            raise HTTPException(status_code=401, detail="Invalid administrator credential.")
+        raise HTTPException(status_code=503, detail="Administrative access is not configured.")
+
+    session_id = request.cookies.get(settings.authentication.session_cookie_name)
+    session = auth_repository.get_session(session_id) if session_id else None
+    csrf = request.headers.get("X-CSRF-Token", "")
+    csrf_hash = sha256(csrf.encode()).hexdigest()
+    if not session or not csrf or not compare_digest(session.get("csrf_hash", ""), csrf_hash):
+        raise HTTPException(status_code=403, detail="Authenticated administrator session and valid CSRF token required.")
+
+    tenant_roles = auth_repository.get_membership(
+        session["issuer"], session["subject"], tenant_id
+    ) or ()
+    if {role.lower() for role in tenant_roles} & {"admin", "owner", "workspace_admin"}:
+        return
+
+    app_membership = auth_repository.list_application_memberships(
+        tenant_id,
+        issuer=session["issuer"],
+        subject=session["subject"],
+        application_id=application_id,
+        environment=environment,
+    )
+    if app_membership and "admin" in {role.lower() for role in app_membership[0]["roles"]}:
+        return
+    raise HTTPException(status_code=403, detail="Administrator permission is required for this application.")
 
 
 def _registration_from_request(
@@ -383,3 +436,114 @@ def revoke_tenant_membership(
     _require_admin(authorization, request, tenant_id)
     auth_repository.revoke_membership(issuer, subject, tenant_id)
     return {"revoked": True, "issuer": issuer, "subject": subject, "tenant_id": tenant_id}
+
+
+@router.put("/application-memberships")
+def grant_application_membership(
+    request: Request,
+    membership: ApplicationMembershipRequest,
+    authorization: str | None = Header(default=None),
+):
+    """Grant a user visibility within one registered application environment."""
+    _require_application_admin(
+        authorization,
+        request,
+        membership.tenant_id,
+        membership.application_id,
+        membership.environment,
+    )
+    settings = load_settings()
+    if membership.issuer != settings.authentication.oidc_issuer:
+        raise HTTPException(status_code=422, detail="Membership issuer must match the configured OIDC issuer.")
+    roles = tuple(sorted({role.strip().lower() for role in membership.roles if role.strip()}))
+    allowed_roles = {"reader", "operator", "admin"}
+    if not roles or not set(roles) <= allowed_roles:
+        raise HTTPException(status_code=422, detail="Application membership contains an unsupported role.")
+    _resolve_tenant(membership.tenant_id)
+    if auth_repository.get_membership(
+        membership.issuer,
+        membership.subject,
+        membership.tenant_id,
+    ) is None:
+        raise HTTPException(status_code=404, detail="Tenant membership must be granted before application access.")
+    if application_repository.get(
+        membership.tenant_id,
+        membership.application_id,
+        membership.environment,
+    ) is None:
+        raise HTTPException(status_code=404, detail="Registered application not found.")
+    auth_repository.grant_application_membership(
+        membership.issuer,
+        membership.subject,
+        membership.tenant_id,
+        membership.application_id,
+        membership.environment,
+        roles,
+    )
+    return {
+        "issuer": membership.issuer,
+        "subject": membership.subject,
+        "tenant_id": membership.tenant_id,
+        "application_id": membership.application_id,
+        "environment": membership.environment,
+        "roles": list(roles),
+    }
+
+
+@router.get("/application-memberships")
+def list_application_memberships(
+    request: Request,
+    tenant_id: str = Query(min_length=1),
+    application_id: str | None = Query(default=None),
+    environment: str | None = Query(default=None),
+    authorization: str | None = Header(default=None),
+):
+    if application_id is not None and environment is not None:
+        _require_application_admin(
+            authorization,
+            request,
+            tenant_id,
+            application_id,
+            environment,
+        )
+    else:
+        _require_admin(authorization, request, tenant_id)
+    return auth_repository.list_application_memberships(
+        tenant_id,
+        application_id=application_id,
+        environment=environment,
+    )
+
+
+@router.delete("/application-memberships")
+def revoke_application_membership(
+    request: Request,
+    issuer: str = Query(min_length=1),
+    subject: str = Query(min_length=1),
+    tenant_id: str = Query(min_length=1),
+    application_id: str = Query(min_length=1),
+    environment: str = Query(min_length=1),
+    authorization: str | None = Header(default=None),
+):
+    _require_application_admin(
+        authorization,
+        request,
+        tenant_id,
+        application_id,
+        environment,
+    )
+    auth_repository.revoke_application_membership(
+        issuer,
+        subject,
+        tenant_id,
+        application_id,
+        environment,
+    )
+    return {
+        "revoked": True,
+        "issuer": issuer,
+        "subject": subject,
+        "tenant_id": tenant_id,
+        "application_id": application_id,
+        "environment": environment,
+    }

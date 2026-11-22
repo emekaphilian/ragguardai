@@ -26,10 +26,31 @@ export type ProvisionedApplication = RegisteredApplication & {
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1'
 export const RAGGUARD_TENANT_ID = import.meta.env.VITE_RAGGUARD_TENANT_ID?.trim() || ''
 let csrfToken = ''
+const APPLICATION_SCOPE_KEY = 'ragguard.applicationScope'
 
-function apiFetch(path: string, init: RequestInit = {}) {
+export type ApplicationScope = { application_id: string; environment: string }
+
+export function getApplicationScope(): ApplicationScope | null {
+  try {
+    const value = sessionStorage.getItem(APPLICATION_SCOPE_KEY)
+    return value ? JSON.parse(value) as ApplicationScope : null
+  } catch {
+    return null
+  }
+}
+
+export function setApplicationScope(scope: ApplicationScope) {
+  sessionStorage.setItem(APPLICATION_SCOPE_KEY, JSON.stringify(scope))
+}
+
+function apiFetch(path: string, init: RequestInit = {}, includeApplicationScope = true) {
   const headers = new Headers(init.headers)
   if (RAGGUARD_TENANT_ID) headers.set('X-RAGGuard-Tenant', RAGGUARD_TENANT_ID)
+  const applicationScope = includeApplicationScope ? getApplicationScope() : null
+  if (applicationScope) {
+    headers.set('X-RAGGuard-Application', applicationScope.application_id)
+    headers.set('X-RAGGuard-Environment', applicationScope.environment)
+  }
   if (csrfToken) headers.set('X-CSRF-Token', csrfToken)
   return fetch(`${API_BASE}${path}`, { ...init, headers, credentials: 'include' })
 }
@@ -80,6 +101,10 @@ export async function getDashboard(){
   }
   return dashboard
 }
+export async function getDefaultDashboard(){
+  const r=await apiFetch('/dashboard', {}, false); if(!r.ok) throw new Error(await responseError(r, 'Dashboard unavailable'))
+  return r.json()
+}
 export async function narrate(page:string, data:unknown){
   const r=await apiFetch('/narrate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page,data})})
   if(!r.ok) throw new Error('Narrator unavailable'); return r.json()
@@ -103,7 +128,7 @@ export async function runRepair(query:string,answer:string,relevantChunkIds:stri
   return r.json()
 }
 export async function getDocuments(){const r=await apiFetch('/documents');if(!r.ok)throw new Error('Documents unavailable');return r.json()}
-export async function getApplications():Promise<RegisteredApplication[]>{const r=await apiFetch('/applications');if(r.status===404)throw new Error('The configured API does not provide the application registry endpoint (GET /api/v1/applications). Deploy the current RAGGuard API, then refresh this page.');if(!r.ok)throw new Error(await responseError(r,'Applications unavailable'));return r.json()}
+export async function getApplications():Promise<RegisteredApplication[]>{const r=await apiFetch('/applications', {}, false);if(r.status===404)throw new Error('The configured API does not provide the application registry endpoint (GET /api/v1/applications). Deploy the current RAGGuard API, then refresh this page.');if(!r.ok)throw new Error(await responseError(r,'Applications unavailable'));return r.json()}
 export async function onboardApplication(payload:{application_id:string;display_name:string;environment:string}):Promise<ProvisionedApplication>{const body={...payload,...(RAGGUARD_TENANT_ID?{ragguard_tenant_id:RAGGUARD_TENANT_ID}:{})};const r=await apiFetch('/admin/applications/onboard',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(!r.ok)throw new Error(await responseError(r,'Could not register application'));return r.json()}
 export async function rotateApplicationCredential(application:RegisteredApplication):Promise<ProvisionedApplication>{const tenantId=application.ragguard_tenant_id||RAGGUARD_TENANT_ID;if(!tenantId)throw new Error('The application workspace could not be identified.');const path=`/admin/applications/${encodeURIComponent(tenantId)}/${encodeURIComponent(application.application_id)}/${encodeURIComponent(application.environment)}/observation-credential`;const r=await apiFetch(path,{method:'POST'});if(!r.ok)throw new Error(await responseError(r,'Could not rotate observation credential'));return r.json()}
 export async function getIntegrationMethods(){const r=await apiFetch('/integration-methods');if(r.status===404)throw new Error('The configured API does not provide GET /api/v1/integration-methods. Confirm VITE_API_BASE_URL points to the intended RAGGuard API and deploy the current backend.');if(!r.ok)throw new Error(await responseError(r,'Integration methods unavailable'));return r.json()}

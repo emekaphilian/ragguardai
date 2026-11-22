@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 
+from ragguard.auth.application_access import visible_applications
 from ragguard.api.middleware import tenant_context
 from ragguard.api.runtime import application_repository, observation_repository
 from ragguard.auth.tenant_context import TenantContext
@@ -11,7 +12,10 @@ router = APIRouter(prefix="/applications", tags=["applications"])
 
 @router.get("")
 def list_applications(context: TenantContext = Depends(tenant_context)):
-    applications = application_repository.list(context.tenant_id)
+    applications = visible_applications(
+        context,
+        application_repository.list(context.tenant_id),
+    )
     result = []
     for application in applications:
         latest_observation = observation_repository.list(

@@ -62,18 +62,19 @@ export default function Overview() {
         value={observationRuns ? `${observationFailures} / ${observationRuns} (${percent(observationFailureRate)})` : '0 / 0'}
         status={observationFailures ? 'warn' : 'good'}
       />
-      <MetricCard label="Latest workspace quality" value={percent(metrics.overall_quality)} status={qualityStatus(metrics.overall_quality)} />
+      <MetricCard label="Latest workspace quality proxy" value={percent(metrics.overall_quality)} status={qualityStatus(metrics.overall_quality)} />
     </div>
     <p className="operations-note">Events are detector-defined retrieval or reliability conditions, not proof that an answer was incorrect. This snapshot covers the {observationRuns} stored observations for <strong>{data.scope?.ragguard_tenant_id || 'unknown tenant'}</strong> / <strong>{observedApplication}</strong>, not a long-term reliability baseline.</p>
 
     <div className="grid two">
       <Section title="RAGGuard workspace quality">
+        <p className="operations-note">These values come from local heuristic proxies. They are not human-labeled evaluation results or proof that an answer is correct.</p>
         <table><tbody>
-          <tr><td>Overall quality</td><td>{percent(metrics.overall_quality)}</td></tr>
-          <tr><td>Retrieval match</td><td>{percent(metrics.term_match)}</td></tr>
-          <tr><td>Source coverage</td><td>{percent(metrics.source_coverage)}</td></tr>
-          <tr><td>Answer relevancy</td><td>{percent(metrics.answer_relevancy)}</td></tr>
-          <tr><td>Faithfulness</td><td>{percent(metrics.faithfulness)}</td></tr>
+          <tr><td>Overall quality proxy</td><td>{percent(metrics.overall_quality)}</td></tr>
+          <tr><td>Retrieval match proxy</td><td>{percent(metrics.term_match)}</td></tr>
+          <tr><td>Source coverage proxy</td><td>{percent(metrics.source_coverage)}</td></tr>
+          <tr><td>Answer relevancy proxy</td><td>{percent(metrics.answer_relevancy)}</td></tr>
+          <tr><td>Faithfulness proxy</td><td>{percent(metrics.faithfulness)}</td></tr>
         </tbody></table>
         {!hasWorkspaceQuality && <p className="answer">No labeled workspace evaluation is available yet. Application observations are tracked separately above and in Query Runs.</p>}
       </Section>
@@ -82,7 +83,7 @@ export default function Overview() {
           <tr><td>Indexed documents</td><td>{data.index.documents}</td></tr>
           <tr><td>Searchable chunks</td><td>{data.index.chunks}</td></tr>
           <tr><td>Retriever</td><td>{data.embedding.model}</td></tr>
-          <tr><td>Shared embedding vocabulary terms</td><td>{data.embedding.dimension}</td></tr>
+          <tr><td>Namespace TF-IDF vocabulary terms</td><td>{data.embedding.dimension}</td></tr>
           <tr><td>Latest retrieval latency</td><td>{data.embedding.latency_ms == null ? '—' : `${data.embedding.latency_ms} ms`}</td></tr>
         </tbody></table>
       </Section>

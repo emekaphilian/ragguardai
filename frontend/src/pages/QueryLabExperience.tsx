@@ -350,7 +350,7 @@ export default function QueryLabExperience() {
             <tr><td>Answer relevance estimate</td><td>{percent(quality.answer_relevancy)}</td></tr>
             <tr><td>Context support estimate</td><td>{percent(quality.faithfulness)}</td></tr>
             <tr><td>Term match proxy</td><td>{percent(quality.term_match)}</td></tr>
-            <tr><td>Source coverage</td><td>{percent(quality.source_coverage)}</td></tr>
+            <tr><td>Source coverage proxy</td><td>{percent(quality.source_coverage)}</td></tr>
           </tbody></table>
         </Section>
       </div>

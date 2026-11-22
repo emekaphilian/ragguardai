@@ -439,6 +439,14 @@ ragguard/
 
 ## Production direction
 
+### OIDC dashboard authorization
+
+Human OIDC users must first have a RAGGuard tenant membership. Tenant roles `admin`, `owner`, and `workspace_admin` are platform-wide roles and can view every registered application in that tenant. Other tenant members see only the application/environment scopes explicitly granted to them. The console's Application selector switches between those authorized scopes; the backend enforces the selection on every request.
+
+Application roles are `reader`, `operator`, and `admin`. `operator` and `admin` can modify workspace data within their selected application; an application `admin` can also grant or revoke memberships for that application/environment through `/api/v1/admin/application-memberships`. An app role does not make its holder a platform tenant administrator, and repairs still require a RAGGuard tenant operator role plus the application's explicit repair authorization. The target user must already be a member of the tenant. Tenant membership is managed separately through `/api/v1/admin/tenant-memberships` by a platform administrator. PostgreSQL deployments persist these grants in the `application_memberships` table (migration `0009_application_memberships.sql`).
+
+This boundary scopes dashboard, query-run, failure, recovery, replay, and repair data. PostgreSQL-backed workspace documents and history use shared persistence, with an opt-in PostgreSQL integration test in CI. A live staging deployment still needs verification for OIDC and app-grant administration, shared rate limits, multi-worker repair context, and operational credential rotation.
+
 The intended cloud topology is:
 
 ```text

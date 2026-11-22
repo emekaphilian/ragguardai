@@ -1,0 +1,18 @@
+environment: staging
+top_k: 5
+max_repair_attempts: 3
+thresholds:
+  context_precision: 0.70
+  context_recall: 0.70
+  faithfulness: 0.70
+  answer_relevancy: 0.70
+tenants:
+  staging:
+    application_id: ragguard-staging
+    vector_namespace: staging
+    policy:
+      version: v1
+    llm:
+      enabled: false
+      provider: openai
+      model: gpt-4o-mini

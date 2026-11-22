@@ -42,6 +42,7 @@ class QueryResponse(BaseModel):
     environment: str | None = None
     knowledge_source: str | None = None
     capability_execution: CapabilityExecution | None = None
+    metric_semantics: dict[str, str] = Field(default_factory=dict)
 
 
 class AdapterRetrievedChunk(BaseModel):

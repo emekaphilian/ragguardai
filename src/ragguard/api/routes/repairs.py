@@ -1,11 +1,11 @@
-from dataclasses import replace
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
+from uuid import uuid4
 
 from ragguard.agents.graph import run_sequential
 from ragguard.agents.state import RAGGuardState
 from ragguard.api.middleware import tenant_context
+from ragguard.auth.application_access import application_is_allowed, visible_applications, resolve_application_context
 from ragguard.api.observation_views import observation_failure
 from ragguard.api.routes.dashboard import dashboard_data
 from ragguard.api.runtime import application_repository, observation_repository, workspace
@@ -68,13 +68,17 @@ def repair(request: RepairRequest, context: TenantContext = Depends(tenant_conte
             request.max_repair_attempts,
             settings.max_repair_attempts,
         )
-    application = application_repository.get(
-        context.tenant_id,
+    application_context, application = resolve_application_context(
+        context,
+        application_repository,
         request.application_id or context.application_id,
         request.environment or context.environment,
     )
     if application is None:
-        raise HTTPException(status_code=404, detail="Application is not registered for this RAGGuard tenant and environment.")
+        raise HTTPException(status_code=404, detail="Application not found for this RAGGuard tenant and environment.")
+    tenant_roles = {str(role).lower() for role in context.roles}
+    if settings.authentication.mode == "oidc" and not tenant_roles & {"operator", "admin", "owner", "workspace_admin"}:
+        raise HTTPException(status_code=403, detail="Repair requires a RAGGuard tenant operator.")
     if not application.repair_authorized:
         capability_results = capability_execution(
             context_verification=(
@@ -138,12 +142,7 @@ def repair(request: RepairRequest, context: TenantContext = Depends(tenant_conte
                 "capability_execution": capability_results,
             },
         )
-    application_context = replace(
-        context,
-        application_id=application.application_id,
-        environment=application.environment,
-        vector_namespace=application.vector_namespace or context.vector_namespace,
-    )
+    workspace.refresh()
     retrieval = workspace.store.search(
         request.query, top_k=request.top_k, namespace=application_context.vector_namespace
     )
@@ -189,7 +188,7 @@ def repair(request: RepairRequest, context: TenantContext = Depends(tenant_conte
         10,
     )
     repair = {
-        "id": f"repair-{len(workspace.repairs) + 1}",
+        "id": f"repair-{uuid4().hex}",
         "query": request.query,
         "status": {
             "repaired": "improved", "rolled_back": "rolled_back",
@@ -231,28 +230,41 @@ def failures(
     application_id: str | None = Query(default=None),
     environment: str | None = Query(default=None),
 ):
-    registrations = application_repository.list(context.tenant_id, active_only=False)
+    registrations = visible_applications(
+        context,
+        application_repository.list(context.tenant_id, active_only=False),
+    )
+    scoped_registrations = [
+        application
+        for application in registrations
+        if (application_id is None or application.application_id == application_id)
+        and (environment is None or application.environment == environment)
+    ]
     if application_id is not None and not any(
         application.application_id == application_id
         and (environment is None or application.environment == environment)
-        for application in registrations
+        for application in scoped_registrations
     ):
         raise HTTPException(status_code=404, detail="Application not found for this RAGGuard tenant.")
+    scopes = {
+        (application.application_id, application.environment)
+        for application in scoped_registrations
+    }
     local_failures = [
         failure for failure in workspace.failures
         if failure["tenant_id"] == context.tenant_id
-        and (application_id is None or failure.get("application_id") == application_id)
-        and (environment is None or failure.get("environment") == environment)
+        and (failure.get("application_id"), failure.get("environment")) in scopes
     ]
     observed_failures = [
         observation_failure(record)
+        for application in scoped_registrations
         for record in observation_repository.list(
-            ragguard_tenant_id=context.tenant_id,
-            application_id=application_id,
-            environment=environment,
-            failure_detected=True,
-            limit=250,
-        )
+                ragguard_tenant_id=context.tenant_id,
+                application_id=application.application_id,
+                environment=application.environment,
+                failure_detected=True,
+                limit=250,
+            )
     ]
     return sorted(
         [*local_failures, *observed_failures],
@@ -263,4 +275,14 @@ def failures(
 
 @router.get("/repairs/{repair_id}")
 def repair_by_id(repair_id: str, context: TenantContext = Depends(tenant_context)):
-    return next((item for item in workspace.repairs if item["id"] == repair_id and item["tenant_id"] == context.tenant_id), {"repair_id": repair_id, "status": "not_found"})
+    repair = next((
+        item for item in workspace.repairs
+        if item["id"] == repair_id and item["tenant_id"] == context.tenant_id
+    ), None)
+    if repair is None or not application_is_allowed(
+        context,
+        repair.get("application_id", context.application_id),
+        repair.get("environment", context.environment),
+    ):
+        return {"repair_id": repair_id, "status": "not_found"}
+    return repair

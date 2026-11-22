@@ -1,4 +1,5 @@
 from dataclasses import replace
+from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
 
 from fastapi.testclient import TestClient
@@ -412,6 +413,102 @@ def test_hash_backed_onboarding_credential_delivers_observation_without_repair(
     assert configure_service_auth.count() == 1
 
 
+def test_concurrent_application_observations_keep_identity_and_permissions_scoped(
+    monkeypatch,
+):
+    applications = InMemoryApplicationRepository()
+    observations = InMemoryObservationRepository()
+    tokens = {
+        "trustassist": "trustassist-observation-token",
+        "biomedicalrag": "biomedicalrag-observation-token",
+        "future-rag": "future-rag-observation-token",
+    }
+    for application_id, token in tokens.items():
+        applications.upsert(ApplicationRegistration(
+            ragguard_tenant_id="platform-tenant",
+            application_id=application_id,
+            display_name=application_id,
+            environment="development",
+            knowledge_source="observation_only",
+            observation_token_hash=sha256(token.encode("utf-8")).hexdigest(),
+        ))
+
+    settings = Settings(tenant_policies=(TenantPolicy(
+        tenant_id="platform-tenant",
+        application_id="ragguard",
+        environment="development",
+        vector_namespace="platform-tenant",
+    ),))
+    monkeypatch.setattr(observations_route, "load_settings", lambda: settings)
+    monkeypatch.setattr(observations_route, "application_repository", applications)
+    monkeypatch.setattr(observations_route, "observation_repository", observations)
+
+    tasks = [
+        (application_id, index)
+        for application_id in tokens
+        for index in range(4)
+    ]
+
+    def submit(task):
+        application_id, index = task
+        return application_id, client.post(
+            "/api/v1/observations",
+            headers={"Authorization": f"Bearer {tokens[application_id]}"},
+            json={
+                "contract_version": "v1",
+                "source": {
+                    "application_id": application_id,
+                    "environment": "development",
+                },
+                "query": f"{application_id} observation {index}",
+                "retrieved_chunks": [{"id": f"chunk-{index}", "score": 0.95}],
+                "retrieval_method": "vector",
+                "answer": "A grounded test answer.",
+                "generation_status": "succeeded",
+            },
+        )
+
+    with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
+        results = list(pool.map(submit, tasks))
+
+    assert all(response.status_code == 200 for _, response in results)
+    assert all(
+        response.json()["capability_execution"]["repair"]["authorization"]
+        == "not_authorized"
+        for _, response in results
+    )
+    assert observations.count(ragguard_tenant_id="platform-tenant") == len(tasks)
+    for application_id in tokens:
+        scoped_records = observations.list(
+            ragguard_tenant_id="platform-tenant",
+            application_id=application_id,
+            environment="development",
+        )
+        assert len(scoped_records) == 4
+        assert all(record.application_id == application_id for record in scoped_records)
+        assert all(
+            record.observation["source"]["application_id"] == application_id
+            for record in scoped_records
+        )
+
+    wrong_app_response = client.post(
+        "/api/v1/observations",
+        headers={"Authorization": f"Bearer {tokens['trustassist']}"},
+        json={
+            "contract_version": "v1",
+            "source": {
+                "application_id": "biomedicalrag",
+                "environment": "development",
+            },
+            "query": "cross-application credential attempt",
+            "retrieved_chunks": [{"id": "chunk-cross", "score": 0.95}],
+            "retrieval_method": "vector",
+        },
+    )
+    assert wrong_app_response.status_code == 401
+    assert observations.count(ragguard_tenant_id="platform-tenant") == len(tasks)
+
+
 def test_observation_source_keeps_source_tenant_distinct_from_ragguard_tenant():
     from ragguard.evaluation.live import ObservationSource
 
@@ -648,7 +745,7 @@ def test_observations_source_application_must_match_authentication():
 
 def test_development_service_auth_resolves_configured_tenant(monkeypatch):
     monkeypatch.setenv("RAGGUARD_SERVICE_TOKEN", "test-service-token")
-    monkeypatch.setenv("RAGGUARD_SERVICE_APPLICATION", "trustassist")
+    monkeypatch.delenv("RAGGUARD_SERVICE_APPLICATION", raising=False)
     monkeypatch.setenv("RAGGUARD_SERVICE_TENANT", "development")
 
     settings = load_settings("configs/development.yaml")
@@ -657,5 +754,6 @@ def test_development_service_auth_resolves_configured_tenant(monkeypatch):
         settings,
     )
 
-    assert authenticated_service.application_id == "trustassist"
+    assert settings.service_auth.application == "ragguard"
+    assert authenticated_service.application_id == "ragguard"
     assert authenticated_service.tenant_context.tenant_id == "development"

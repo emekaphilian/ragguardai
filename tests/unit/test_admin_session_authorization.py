@@ -56,3 +56,20 @@ def test_admin_session_requires_valid_csrf_and_selected_tenant_membership(monkey
     with pytest.raises(HTTPException) as tenant_error:
         admin._require_admin(None, make_request(), "tenant-b")
     assert tenant_error.value.status_code == 403
+
+
+def test_application_admin_is_limited_to_its_application(monkeypatch):
+    repository = setup_admin(monkeypatch, roles=("viewer",))
+    repository.grant_application_membership(
+        "https://identity.example", "admin-user", "tenant-a",
+        "trustassist", "production", ("admin",),
+    )
+
+    admin._require_application_admin(
+        None, make_request(), "tenant-a", "trustassist", "production"
+    )
+    with pytest.raises(HTTPException) as exc:
+        admin._require_application_admin(
+            None, make_request(), "tenant-a", "biomedicalrag", "production"
+        )
+    assert exc.value.status_code == 403

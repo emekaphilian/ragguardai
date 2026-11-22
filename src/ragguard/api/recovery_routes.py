@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from ragguard.auth.application_access import application_is_allowed
 from ragguard.api.middleware import tenant_context
 from ragguard.api.runtime import application_repository
 from ragguard.api.schemas import RecoveryAuditPageResponse, RecoveryAuditResponse
@@ -23,6 +24,7 @@ def build_recovery_router(
     def list_recoveries(
         tenant_id: str | None = Query(default=None),
         application_id: str | None = Query(default=None),
+        environment: str | None = Query(default=None),
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=50, ge=1),
         context: TenantContext = Depends(tenant_context),
@@ -33,26 +35,54 @@ def build_recovery_router(
                 status_code=422,
                 detail=f"page_size must not exceed {max_page_size}.",
             )
-        if application_id is not None and not any(
-            application.application_id == application_id
-            for application in application_repository.list(
-                context.tenant_id,
-                active_only=False,
-            )
-        ):
-            raise HTTPException(status_code=404, detail="Application not found for this RAGGuard tenant.")
-
-        filters = {
-            "ragguard_tenant_id": context.tenant_id,
-            "tenant_id": tenant_id,
-            "application_id": application_id,
+        if context.application_memberships is None:
+            scopes = {
+                (application.application_id, application.environment)
+                for application in application_repository.list(context.tenant_id, active_only=False)
+            }
+        else:
+            scopes = {
+                (application, app_environment)
+                for application, app_environment, _ in context.application_memberships
+            }
+        scopes = {
+            (application, app_environment)
+            for application, app_environment in scopes
+            if (application_id is None or application == application_id)
+            and (environment is None or app_environment == environment)
         }
-        total = repository.count(**filters)
-        records = repository.list(
-            **filters,
-            limit=page_size,
-            offset=(page - 1) * page_size,
-        )
+        if application_id is not None and not scopes:
+            raise HTTPException(status_code=404, detail="Application not found for this RAGGuard tenant.")
+        offset = (page - 1) * page_size
+        total = 0
+        records = []
+        if context.application_memberships is None and application_id is None:
+            # Platform tenant admins can inspect historical records even if an
+            # application registration has since been removed.
+            filters = {
+                "ragguard_tenant_id": context.tenant_id,
+                "tenant_id": tenant_id,
+                "environment": environment,
+            }
+            total = repository.count(**filters)
+            records = repository.list(**filters, limit=offset + page_size, offset=0)
+        for application, app_environment in scopes if not (
+            context.application_memberships is None and application_id is None
+        ) else ():
+            filters = {
+                "ragguard_tenant_id": context.tenant_id,
+                "tenant_id": tenant_id,
+                "application_id": application,
+                "environment": app_environment,
+            }
+            total += repository.count(**filters)
+            records.extend(repository.list(
+                **filters,
+                limit=offset + page_size,
+                offset=0,
+            ))
+        records.sort(key=lambda record: record.started_at, reverse=True)
+        records = records[offset:offset + page_size]
         return {
             "items": [record_to_dict(record) for record in records],
             "page": page,
@@ -70,6 +100,11 @@ def build_recovery_router(
         if (
             record is None
             or record.ragguard_tenant_id != context.tenant_id
+            or not application_is_allowed(
+                context,
+                record.application_id or "",
+                record.environment,
+            )
         ):
             raise HTTPException(
                 status_code=404,

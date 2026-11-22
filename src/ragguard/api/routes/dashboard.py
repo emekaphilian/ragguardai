@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, Query
 
+from ragguard.auth.application_access import visible_applications
 from ragguard.api.observation_views import observation_failure, observation_run
 from ragguard.api.runtime import application_repository, observation_repository, workspace
 from ragguard.auth.tenant_context import TenantContext
@@ -75,6 +76,16 @@ def dashboard_data(context: TenantContext) -> dict:
         "application_id": context.application_id,
         "environment": context.environment,
     }
+    result["metric_semantics"] = {
+        "term_match": "lexical query-term overlap proxy; not a labeled relevance score",
+        "source_coverage": "retrieval-threshold proxy; not answer citation coverage",
+        "answer_relevancy": "local lexical similarity proxy; not a labeled relevance judgment",
+        "faithfulness": "local context overlap proxy; not a semantic entailment check",
+        "citation_accuracy": "default metric value; no citation verifier runs in this local workspace path",
+        "overall_quality": "mean of available local proxy metrics",
+        "embedding_model": "local TF-IDF retrieval model; not a neural embedding model",
+        "observed_reliability_event_rate": "fraction of observed requests classified as failures by configured rules",
+    }
     return result
 
 
@@ -93,34 +104,47 @@ def runs(
     status: str | None = Query(default=None),
     failure_detected: bool | None = Query(default=None),
 ):
-    registered_applications = application_repository.list(context.tenant_id)
-    if application_id is not None and not any(
-        application.application_id == application_id
-        and (environment is None or application.environment == environment)
+    registered_applications = visible_applications(
+        context,
+        application_repository.list(context.tenant_id),
+    )
+    scoped_applications = [
+        application
         for application in registered_applications
-    ):
+        if (application_id is None or application.application_id == application_id)
+        and (environment is None or application.environment == environment)
+    ]
+    if application_id is not None and not scoped_applications:
         return []
+
+    scopes = {
+        (application.application_id, application.environment)
+        for application in scoped_applications
+    }
 
     local_runs = [
         {**run, "source": "workspace"}
         for run in workspace.runs
         if run["tenant_id"] == context.tenant_id
-        and (application_id is None or run.get("application_id") == application_id)
-        and (environment is None or run.get("environment") == environment)
+        and (run.get("application_id"), run.get("environment")) in scopes
         and (status is None or run.get("status") == status)
         and (
             failure_detected is None
             or (run.get("status") == "no_match") is failure_detected
         )
     ]
-    observation_records = observation_repository.list(
-        ragguard_tenant_id=context.tenant_id,
-        application_id=application_id,
-        environment=environment,
-        status=status,
-        failure_detected=failure_detected,
-        limit=limit + offset,
-    )
+    observation_records = [
+        record
+        for application in scoped_applications
+        for record in observation_repository.list(
+            ragguard_tenant_id=context.tenant_id,
+            application_id=application.application_id,
+            environment=application.environment,
+            status=status,
+            failure_detected=failure_detected,
+            limit=limit + offset,
+        )
+    ]
     combined = [
         *local_runs,
         *(observation_run(record) for record in observation_records),

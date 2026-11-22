@@ -81,6 +81,7 @@ class PostgreSQLRecoveryAuditRepository(RecoveryAuditRepository):
         ragguard_tenant_id: str | None = None,
         tenant_id: str | None = None,
         application_id: str | None = None,
+        environment: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[RecoveryAuditRecord]:
@@ -93,6 +94,7 @@ class PostgreSQLRecoveryAuditRepository(RecoveryAuditRepository):
             ragguard_tenant_id,
             tenant_id,
             application_id,
+            environment,
         )
         parameters.extend((limit, offset))
         with self._connect() as connection:
@@ -112,11 +114,13 @@ class PostgreSQLRecoveryAuditRepository(RecoveryAuditRepository):
         ragguard_tenant_id: str | None = None,
         tenant_id: str | None = None,
         application_id: str | None = None,
+        environment: str | None = None,
     ) -> int:
         where_clause, parameters = self._where_clause(
             ragguard_tenant_id,
             tenant_id,
             application_id,
+            environment,
         )
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -155,6 +159,7 @@ class PostgreSQLRecoveryAuditRepository(RecoveryAuditRepository):
         ragguard_tenant_id: str | None,
         tenant_id: str | None,
         application_id: str | None,
+        environment: str | None,
     ) -> tuple[str, list[Any]]:
         filters = []
         parameters: list[Any] = []
@@ -166,6 +171,9 @@ class PostgreSQLRecoveryAuditRepository(RecoveryAuditRepository):
             if value is not None:
                 filters.append(f"{column} = %s")
                 parameters.append(value)
+        if environment is not None:
+            filters.append("record->>'environment' = %s")
+            parameters.append(environment)
         where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
         return where_clause, parameters
 

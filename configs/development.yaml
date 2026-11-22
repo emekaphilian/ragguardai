@@ -8,7 +8,7 @@ thresholds:
   answer_relevancy: 0.70
 tenants:
   development:
-    application_id: trustassist
+    application_id: ragguard
     vector_namespace: development
     policy:
       version: v1

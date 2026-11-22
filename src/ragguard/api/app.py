@@ -25,6 +25,7 @@ from ragguard.auth.oidc import router as auth_router
 from .recovery_routes import build_recovery_router
 
 from ragguard.api.middleware import resolve_request_context
+from ragguard.auth.application_access import require_application_role
 from ragguard.api.runtime import application_repository
 from ragguard.api.runtime import auth_repository
 from ragguard.common.exceptions import RAGGuardError
@@ -67,7 +68,11 @@ async def lifespan(_: FastAPI):
             raise RuntimeError("Set the initial OIDC administrator subject and tenant before enabling OIDC.")
     if backend in {"postgres", "postgresql"}:
         apply_migrations()
+    elif settings.environment.lower() in {"production", "staging"}:
+        raise RuntimeError("Staging and production require PostgreSQL-backed managed document storage and workspace activity.")
     application_repository.bootstrap(settings.tenant_policies)
+    from ragguard.api.runtime import workspace
+    workspace.refresh()
     if settings.authentication.mode == "oidc":
         issuer = settings.authentication.oidc_issuer
         subject = os.environ["RAGGUARD_OIDC_BOOTSTRAP_ADMIN_SUBJECT"].strip()
@@ -152,9 +157,20 @@ async def attach_tenant_context(request: Request, call_next):
 
     context = request.state.tenant_context
     if settings.authentication.mode == "oidc" and request.method not in {"GET", "HEAD", "OPTIONS"}:
-        roles = {str(role).lower() for role in context.roles}
-        if not (roles & {"operator", "admin", "owner", "workspace_admin"}):
-            return JSONResponse(status_code=403, content={"detail": "This tenant role cannot modify workspace data."})
+        # Repair accepts an application override in its body. Its route resolves
+        # and authorizes that exact target, so middleware must not authorize it
+        # against a potentially different header-selected application.
+        if request.url.path == "/api/v1/query":
+            return await call_next(request)
+        if request.url.path == "/api/v1/repair":
+            tenant_roles = {str(role).lower() for role in context.roles}
+            if not tenant_roles & {"operator", "admin", "owner", "workspace_admin"}:
+                return JSONResponse(status_code=403, content={"detail": "Repair requires a RAGGuard tenant operator."})
+            return await call_next(request)
+        if not require_application_role(
+            context, context.application_id, context.environment, {"operator", "admin"}
+        ):
+            return JSONResponse(status_code=403, content={"detail": "This tenant or application role cannot modify workspace data."})
 
     return await call_next(request)
 

@@ -22,6 +22,7 @@ class RecoveryAuditRepository(Protocol):
         ragguard_tenant_id: str | None = None,
         tenant_id: str | None = None,
         application_id: str | None = None,
+        environment: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[RecoveryAuditRecord]:
@@ -33,6 +34,7 @@ class RecoveryAuditRepository(Protocol):
         ragguard_tenant_id: str | None = None,
         tenant_id: str | None = None,
         application_id: str | None = None,
+        environment: str | None = None,
     ) -> int:
         ...
 
@@ -66,6 +68,7 @@ class InMemoryRecoveryAuditRepository(RecoveryAuditRepository):
         ragguard_tenant_id: str | None = None,
         tenant_id: str | None = None,
         application_id: str | None = None,
+        environment: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[RecoveryAuditRecord]:
@@ -82,6 +85,7 @@ class InMemoryRecoveryAuditRepository(RecoveryAuditRepository):
             ragguard_tenant_id=ragguard_tenant_id,
             tenant_id=tenant_id,
             application_id=application_id,
+            environment=environment,
             limit=limit,
             offset=offset,
         )
@@ -92,10 +96,17 @@ class InMemoryRecoveryAuditRepository(RecoveryAuditRepository):
         ragguard_tenant_id: str | None = None,
         tenant_id: str | None = None,
         application_id: str | None = None,
+        environment: str | None = None,
     ) -> int:
         with self._lock:
             records = list(self._records.values())
-        return len(self._filter(records, ragguard_tenant_id, tenant_id, application_id))
+        return len(self._filter(
+            records,
+            ragguard_tenant_id,
+            tenant_id,
+            application_id,
+            environment,
+        ))
 
     def delete_expired(self, before: datetime) -> int:
         with self._lock:
@@ -122,6 +133,7 @@ class InMemoryRecoveryAuditRepository(RecoveryAuditRepository):
         ragguard_tenant_id: str | None,
         tenant_id: str | None,
         application_id: str | None,
+        environment: str | None,
     ) -> list[RecoveryAuditRecord]:
         if ragguard_tenant_id is not None:
             records = [
@@ -137,6 +149,8 @@ class InMemoryRecoveryAuditRepository(RecoveryAuditRepository):
                 for record in records
                 if record.application_id == application_id
             ]
+        if environment is not None:
+            records = [record for record in records if record.environment == environment]
         return records
 
     @classmethod
@@ -147,9 +161,16 @@ class InMemoryRecoveryAuditRepository(RecoveryAuditRepository):
         ragguard_tenant_id: str | None,
         tenant_id: str | None,
         application_id: str | None,
+        environment: str | None,
         limit: int,
         offset: int,
     ) -> list[RecoveryAuditRecord]:
-        records = cls._filter(records, ragguard_tenant_id, tenant_id, application_id)
+        records = cls._filter(
+            records,
+            ragguard_tenant_id,
+            tenant_id,
+            application_id,
+            environment,
+        )
         records.sort(key=lambda record: record.started_at, reverse=True)
         return records[offset:offset + limit]

@@ -1,0 +1,76 @@
+# Isolated RAGGuard staging environment. Select this file explicitly when
+# creating a Render Blueprint; it is intentionally not named render.yaml.
+projects:
+  - name: ragguard-staging
+    environments:
+      - name: staging
+        permissions:
+          protection: enabled
+        services:
+          - type: web
+            name: ragguard-staging-api
+            runtime: docker
+            dockerfilePath: ./deployment/docker/production.Dockerfile
+            region: frankfurt
+            plan: free
+            autoDeployTrigger: off
+            healthCheckPath: /api/v1/health
+            envVars:
+              - key: RAGGUARD_CONFIG
+                value: configs/staging.yaml
+              - key: RAGGUARD_ENV
+                value: staging
+              - key: RAGGUARD_SERVICE_TENANT
+                value: staging
+              - key: RAGGUARD_AUDIT_BACKEND
+                value: postgres
+              - key: RAGGUARD_DATABASE_URL
+                fromDatabase:
+                  name: ragguard-staging-db
+                  property: connectionString
+              - key: RAGGUARD_AUTH_MODE
+                value: oidc
+              - key: RAGGUARD_OIDC_ISSUER
+                sync: false
+              - key: RAGGUARD_OIDC_CLIENT_ID
+                sync: false
+              - key: RAGGUARD_OIDC_CLIENT_SECRET
+                sync: false
+              - key: RAGGUARD_OIDC_TOKEN_AUTH_METHOD
+                value: client_secret_basic
+              - key: RAGGUARD_OIDC_REDIRECT_URI
+                value: https://ragguard-staging-api.onrender.com/api/v1/auth/callback
+              - key: RAGGUARD_FRONTEND_URL
+                value: https://ragguard-staging-dashboard.onrender.com
+              - key: RAGGUARD_FRONTEND_ORIGINS
+                value: https://ragguard-staging-dashboard.onrender.com
+              - key: RAGGUARD_SESSION_COOKIE_SECURE
+                value: "true"
+              - key: RAGGUARD_SESSION_COOKIE_SAMESITE
+                value: none
+              - key: RAGGUARD_SESSION_SECRET
+                generateValue: true
+              - key: RAGGUARD_OIDC_BOOTSTRAP_ADMIN_SUBJECT
+                sync: false
+              - key: RAGGUARD_OIDC_BOOTSTRAP_ADMIN_TENANT
+                value: staging
+          - type: web
+            runtime: static
+            name: ragguard-staging-dashboard
+            rootDir: frontend
+            buildCommand: npm ci && npm run build
+            staticPublishPath: dist
+            autoDeployTrigger: off
+            envVars:
+              - key: VITE_API_BASE_URL
+                value: https://ragguard-staging-api.onrender.com/api/v1
+              - key: VITE_RAGGUARD_TENANT_ID
+                value: staging
+        databases:
+          - name: ragguard-staging-db
+            region: frankfurt
+            plan: 0.1c-256mb
+            postgresMajorVersion: "18"
+            databaseName: ragguard_staging
+            user: ragguard_staging
+            ipAllowList: []

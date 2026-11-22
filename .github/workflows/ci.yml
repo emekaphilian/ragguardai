@@ -57,6 +57,22 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: ragguard_test
+          POSTGRES_USER: ragguard
+          POSTGRES_PASSWORD: ragguard_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ragguard -d ragguard_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      RAGGUARD_TEST_DATABASE_URL: postgresql://ragguard:ragguard_test@localhost:5432/ragguard_test
 
     steps:
       - name: Checkout repository
@@ -70,6 +86,11 @@ jobs:
 
       - name: Install Python dependencies
         run: python -m pip install -r requirements.txt
+
+      - name: Install PostgreSQL backup utilities
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
 
       - name: Run tests
         run: python -m pytest -q

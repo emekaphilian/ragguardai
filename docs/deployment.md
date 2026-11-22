@@ -67,6 +67,14 @@ configure `RAGGUARD_DATABASE_URL` as a secret in the hosting environment. The
 PostgreSQL driver is installed by the production image. On startup, the API
 applies the checked-in SQL migrations before accepting requests.
 
+Staging and production refuse to start with the in-memory backend. The same
+PostgreSQL setting persists managed document bodies, recycle-bin state, and
+workspace runs, failures, and repairs. Each document is keyed by RAGGuard tenant,
+application, environment, and document ID. Each API worker reloads the shared
+document set before serving workspace queries, so committed changes are visible
+across workers. The bundled TF-IDF index is rebuilt per worker and per namespace;
+it is not itself stored as a serialized vector index.
+
 ```powershell
 python -m pip install ".[postgres]"
 $env:RAGGUARD_AUDIT_BACKEND = "postgres"
@@ -86,7 +94,7 @@ a future, explicitly authorized administrative clear operation.
 The explicit clear operation is `DELETE /api/v1/admin/history`. It requires a
 separate server-side `RAGGUARD_ADMIN_TOKEN` bearer credential and the
 `X-Confirm-Delete: clear-all-history` header. It clears observation records,
-recovery audits, and in-process workspace run/failure/repair history. It is
+recovery audits, and persisted workspace run/failure/repair history. It is
 disabled when the admin token is not configured. Never expose this token in the
 frontend.
 

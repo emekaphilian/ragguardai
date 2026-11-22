@@ -2,6 +2,7 @@ from dataclasses import replace
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
+from ragguard.auth.application_access import resolve_application_context
 from ragguard.auth.tenant_context import TenantContext
 from ragguard.api.middleware import tenant_context
 from ragguard.api.schemas import DocumentRequest, QueryRequest, QueryResponse
@@ -17,10 +18,8 @@ def query(request: QueryRequest, context: TenantContext = Depends(tenant_context
     application_id = request.application_id or context.application_id
     environment = request.environment or context.environment
 
-    application = application_repository.get(
-        context.tenant_id,
-        application_id,
-        environment,
+    application_context, application = resolve_application_context(
+        context, application_repository, application_id, environment
     )
 
     if application is None:
@@ -88,13 +87,6 @@ def query(request: QueryRequest, context: TenantContext = Depends(tenant_context
                 method=request.method,
             )
         )
-
-    application_context = replace(
-        context,
-        application_id=application.application_id,
-        environment=application.environment,
-        vector_namespace=application.vector_namespace or context.vector_namespace,
-    )
 
     return QueryResponse(
         **workspace.query(
