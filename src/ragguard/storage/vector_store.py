@@ -70,8 +70,11 @@ class VectorStore:
         q = vectorizer.transform([query])
         scores = (matrix @ q.T).toarray().ravel()
 
-        ranked_local = sorted(range(len(candidate_indexes)), key=lambda index: scores[index], reverse=True)[:top_k]
-        order = [candidate_indexes[index] for index in ranked_local]
+        ranked_local = [
+            i for i in sorted(range(len(candidate_indexes)), key=lambda index: scores[index], reverse=True)[:top_k]
+            if scores[i] > 0
+        ]
+        order = [candidate_indexes[i] for i in ranked_local]
 
         return RetrievalResult(
             query=query,
