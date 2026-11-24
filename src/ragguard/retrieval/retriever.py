@@ -1,19 +1,22 @@
 from ragguard.common.exceptions import RetrievalError
+from ragguard.auth.tenant_context import TenantContext
 from ragguard.retrieval.hybrid import hybrid_retrieve, keyword_retrieve
 from ragguard.retrieval.vector import vector_retrieve
 
 
-def retrieve(store, query, method="vector", top_k=5, context=None):
+def retrieve(store, query, method="vector", top_k=5, *, context: TenantContext):
     if not query or not query.strip():
         raise RetrievalError("Retrieval query must not be empty.")
 
     if top_k < 1:
         raise RetrievalError("top_k must be greater than zero.")
 
-    namespace = context.vector_namespace if context is not None else None
+    if not isinstance(context, TenantContext):
+        raise RetrievalError("Retrieval requires a complete tenant and application context.")
+    scope = context.scope
 
     try:
-        if namespace is not None and method in {"hybrid", "keyword"}:
+        if method in {"hybrid", "keyword"}:
             original_store = store
 
             from types import SimpleNamespace
@@ -22,12 +25,23 @@ def retrieve(store, query, method="vector", top_k=5, context=None):
                 chunks=[
                     chunk
                     for chunk in original_store.chunks
-                    if chunk.metadata.get("tenant_namespace") == namespace
+                    if (
+                        chunk.metadata.get("tenant_namespace"),
+                        chunk.metadata.get("ragguard_tenant_id"),
+                        chunk.metadata.get("application_id"),
+                        chunk.metadata.get("environment"),
+                    )
+                    == (
+                        scope.vector_namespace,
+                        scope.tenant_id,
+                        scope.application_id,
+                        scope.environment,
+                    )
                 ],
                 search=lambda q, k: original_store.search(
                     q,
                     k,
-                    namespace=namespace,
+                    scope=scope,
                 ),
             )
 
@@ -42,13 +56,46 @@ def retrieve(store, query, method="vector", top_k=5, context=None):
                 f"Unsupported retrieval method: {method}"
             )
 
-        if namespace is not None:
-            return store.search(query, top_k, namespace=namespace)
-
-        return vector_retrieve(store, query, top_k)
+        return vector_retrieve(store, query, top_k, scope=scope)
 
     except RetrievalError:
         raise
 
     except Exception as exc:
         raise RetrievalError("Retrieval failed.") from exc
+
+
+def retrieve_privileged(store, query, method="vector", top_k=5, *, namespace: str):
+    """Run an explicitly privileged retrieval within one vector namespace."""
+    if not query or not query.strip():
+        raise RetrievalError("Retrieval query must not be empty.")
+    if top_k < 1:
+        raise RetrievalError("top_k must be greater than zero.")
+    if not isinstance(namespace, str) or not namespace.strip():
+        raise RetrievalError("Privileged retrieval requires an explicit namespace.")
+
+    try:
+        if method in {"hybrid", "keyword"}:
+            from types import SimpleNamespace
+
+            original_store = store
+            store = SimpleNamespace(
+                chunks=[
+                    chunk for chunk in original_store.chunks
+                    if chunk.metadata.get("tenant_namespace") == namespace
+                ],
+                search=lambda q, k: original_store.search_privileged(
+                    q, k, namespace=namespace
+                ),
+            )
+        if method == "hybrid":
+            return hybrid_retrieve(store, query, top_k)
+        if method == "keyword":
+            return keyword_retrieve(store.chunks, query, top_k)
+        if method != "vector":
+            raise RetrievalError(f"Unsupported retrieval method: {method}")
+        return store.search_privileged(query, top_k, namespace=namespace)
+    except RetrievalError:
+        raise
+    except Exception as exc:
+        raise RetrievalError("Privileged retrieval failed.") from exc

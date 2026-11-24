@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 
 from ragguard.agents.graph import build_langgraph
+from ragguard.auth.application_access import require_application_repair_authorization
 from ragguard.auth.tenant_context import TenantContext
 from ragguard.diagnosis.diagnostic_agent import diagnose
 from ragguard.evaluation.live import LiveEvaluation, RAGObservation
@@ -12,6 +13,7 @@ from ragguard.observability.recovery_repository import (
 )
 from ragguard.events.bus import RecoveryEventBus
 from ragguard.repair.repair_policy import EXECUTABLE_REPAIRS
+from ragguard.tenants.application_registration import ApplicationRegistration
 
 from .observation_recovery import build_observation_state
 
@@ -72,9 +74,15 @@ class ObservationRecoveryService:
         *,
         observation: RAGObservation,
         context: TenantContext,
+        application_registration: ApplicationRegistration | None = None,
         evaluation: LiveEvaluation,
         failure_event,
     ) -> dict:
+        if self.available_repairs:
+            require_application_repair_authorization(
+                context,
+                application_registration,
+            )
         retrieval_result = None
         graph_evaluator = self.evaluator
         graph_metrics = evaluation
@@ -93,6 +101,7 @@ class ObservationRecoveryService:
         state = build_observation_state(
             observation=observation,
             context=context,
+            application_registration=application_registration,
             retrieval_result=retrieval_result,
             evaluation_result=graph_metrics,
             failure_event=failure_event,

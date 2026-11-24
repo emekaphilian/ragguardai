@@ -17,7 +17,12 @@ def main():
     ]
     store = VectorStore()
     chunks = [c for d in docs for c in sentence_aware(d, 120)]
-    store.add(chunks)
+    namespace = (
+        settings.tenant_policies[0].vector_namespace
+        if settings.tenant_policies
+        else "development"
+    )
+    store.add(chunks, namespace=namespace)
 
     evaluator = Evaluator()
     rows = [
@@ -34,7 +39,9 @@ def main():
     ]
 
     for query, answer, relevant in rows:
-        retrieval = store.search(query, settings.top_k)
+        retrieval = store.search_privileged(
+            query, settings.top_k, namespace=namespace
+        )
         metrics = evaluator.evaluate(query, answer, retrieval, relevant)
         print(
             f"{query}: overall={metrics.overall_score:.3f}, "

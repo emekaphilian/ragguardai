@@ -18,11 +18,17 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      - name: Upgrade pip
-        run: python -m pip install --upgrade pip
+      - name: Install the tested application environment
+        run: |
+          python -m pip install --upgrade pip "setuptools>=84.1.0"
+          python -m pip install -r requirements.txt
+          python -m pip install --no-build-isolation -e ".[dev,postgres,llm]"
 
       - name: Install pip-audit
         run: python -m pip install pip-audit
 
-      - name: Audit dependencies
-        run: pip-audit -r requirements.txt
+      - name: Check installed dependencies
+        run: python -m pip check
+
+      - name: Audit installed application and build dependencies
+        run: pip-audit --local

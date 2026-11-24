@@ -8,5 +8,5 @@ def test_quality_has_signal():
         Document(document_id="d", text="Refunds are available within 30 days."),
         100,
     ))
-    result = store.search("refund 30 days", 1)
+    result = store.search_privileged("refund 30 days", 1, namespace="development")
     assert result.scores[0] > 0

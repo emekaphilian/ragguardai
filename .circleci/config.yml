@@ -42,7 +42,11 @@ jobs:
             - v1-pip-
       - run:
           name: Install Python dependencies
-          command: python -m pip install -r requirements.txt
+          command: |
+            python -m pip install --upgrade pip 'setuptools>=84.1.0'
+            python -m pip install -r requirements.txt
+            python -m pip install --no-build-isolation -e '.[dev,postgres,llm]'
+            python -m pip install pip-audit
       - save_cache:
           key: v1-pip-{{ checksum "requirements.txt" }}-python-tests
           paths:
@@ -53,6 +57,12 @@ jobs:
       - run:
           name: Run pipeline smoke test
           command: python scripts/run_pipeline.py
+      - run:
+          name: Check tested dependencies
+          command: python -m pip check
+      - run:
+          name: Audit tested application and build dependencies
+          command: pip-audit --local
 
   oidc-transport-tests:
     parameters:
@@ -66,7 +76,10 @@ jobs:
       - checkout
       - run:
           name: Install project dependencies
-          command: python -m pip install -r requirements.txt
+          command: |
+            python -m pip install --upgrade pip 'setuptools>=84.1.0'
+            python -m pip install -r requirements.txt
+            python -m pip install --no-build-isolation -e '.[dev,postgres,llm]'
       - run:
           name: Select HTTPX and HTTPCore compatibility targets
           command: >-
@@ -90,9 +103,14 @@ jobs:
 
   frontend-build:
     docker:
-      - image: cimg/node:20.0
+      - image: cimg/node:24.21.0
     steps:
       - checkout
+      - run:
+          name: Report Node.js and npm versions
+          command: |
+            node --version
+            npm --version
       - restore_cache:
           keys:
             - v1-npm-{{ checksum "frontend/package-lock.json" }}
@@ -116,11 +134,18 @@ jobs:
     steps:
       - checkout
       - run:
-          name: Install pip-audit
-          command: python -m pip install pip-audit
+          name: Install the tested application environment and pip-audit
+          command: |
+            python -m pip install --upgrade pip 'setuptools>=84.1.0'
+            python -m pip install -r requirements.txt
+            python -m pip install --no-build-isolation -e '.[dev,postgres,llm]'
+            python -m pip install pip-audit
       - run:
-          name: Audit Python dependencies
-          command: pip-audit -r requirements.txt
+          name: Check installed dependencies
+          command: python -m pip check
+      - run:
+          name: Audit installed application and build dependencies
+          command: pip-audit --local
 
 workflows:
   ragguard-ci:

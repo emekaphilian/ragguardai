@@ -12,9 +12,26 @@ from ragguard.diagnosis.diagnostic_agent import diagnose
 from ragguard.repair.repair_engine import RepairEngine
 from ragguard.agents.state import RAGGuardState
 from ragguard.agents.graph import run_sequential
+from ragguard.tenants.service import TenantService
+from ragguard.tenants.application_registration import ApplicationRegistration
 
 def main():
     settings = load_settings()
+    context = TenantService(settings).resolve(
+        settings.tenant_policies[0].tenant_id
+        if settings.tenant_policies
+        else "development"
+    )
+    application = ApplicationRegistration(
+        ragguard_tenant_id=context.tenant_id,
+        application_id=context.application_id,
+        display_name=context.application_id,
+        environment=context.environment,
+        knowledge_source="managed_index",
+        repair_authorized=True,
+        context_verification_authorized=True,
+        vector_namespace=context.vector_namespace,
+    )
 
     docs = [
         Document(
@@ -43,7 +60,13 @@ def main():
 
     store = VectorStore()
     chunks = [c for d in docs for c in sentence_aware(d, max_chars=180)]
-    store.add(chunks)
+    for chunk in chunks:
+        chunk.metadata.update({
+            "ragguard_tenant_id": context.tenant_id,
+            "application_id": context.application_id,
+            "environment": context.environment,
+        })
+    store.add(chunks, namespace=context.vector_namespace)
 
     query = "How long do I have to request a refund?"
     answer = "Refunds are available within 30 days of purchase."
@@ -51,12 +74,14 @@ def main():
     # fact; only the canonical refund chunk is labeled relevant.
     relevant = {c.chunk_id for c in chunks if c.document_id == "refund" and "30 days" in c.text}
 
-    retrieval = store.search(query, top_k=settings.top_k)
+    retrieval = store.search(query, top_k=settings.top_k, scope=context.scope)
     evaluator = Evaluator()
     baseline = evaluator.evaluate(query, answer, retrieval, relevant)
 
     state = RAGGuardState(
         query=query,
+        context=context,
+        application_registration=application,
         retrieval_result=retrieval,
         evaluation_result=baseline,
     )

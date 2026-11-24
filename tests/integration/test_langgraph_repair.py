@@ -1,5 +1,7 @@
 from ragguard.agents.graph import build_langgraph
 from ragguard.agents.state import RAGGuardState
+from ragguard.auth.tenant_context import TenantContext
+from ragguard.tenants.application_registration import ApplicationRegistration
 from ragguard.common.enums import (
     FailureMode,
     RepairType,
@@ -23,9 +25,34 @@ from ragguard.storage.vector_store import VectorStore
 from ragguard.observability.recovery_audit import RecoveryEventType
 
 
+CONTEXT = TenantContext(
+    "test-tenant", "test-app", "staging", None, (), "test-namespace", "v1", "v1"
+)
+APPLICATION = ApplicationRegistration(
+    ragguard_tenant_id=CONTEXT.tenant_id,
+    application_id=CONTEXT.application_id,
+    display_name="Test application",
+    environment=CONTEXT.environment,
+    knowledge_source="managed_index",
+    repair_authorized=True,
+    context_verification_authorized=True,
+    vector_namespace=CONTEXT.vector_namespace,
+)
+
+
+def add_scoped(store, chunks):
+    for chunk in chunks:
+        chunk.metadata.update({
+            "ragguard_tenant_id": CONTEXT.tenant_id,
+            "application_id": CONTEXT.application_id,
+            "environment": CONTEXT.environment,
+        })
+    store.add(chunks, namespace=CONTEXT.vector_namespace)
+
+
 def build_duplicate_graph(repair_engine=None):
     store = VectorStore()
-    store.add([
+    add_scoped(store, [
         Chunk(
             chunk_id="duplicate-1",
             document_id="noise-1",
@@ -47,7 +74,9 @@ def build_duplicate_graph(repair_engine=None):
     evaluator = Evaluator()
     state = RAGGuardState(
         query=query,
-        retrieval_result=store.search(query, top_k=3),
+        context=CONTEXT,
+        application_registration=APPLICATION,
+        retrieval_result=store.search(query, top_k=3, scope=CONTEXT.scope),
     )
     graph = build_langgraph(
         FailureDetector(Thresholds()),
@@ -63,7 +92,7 @@ def build_duplicate_graph(repair_engine=None):
 
 def test_langgraph_healthy_retrieval_ends_without_repair():
     store = VectorStore()
-    store.add([
+    add_scoped(store, [
         Chunk(
             chunk_id="relevant",
             document_id="policy",
@@ -74,7 +103,9 @@ def test_langgraph_healthy_retrieval_ends_without_repair():
     answer = "refund policy"
     state = RAGGuardState(
         query=query,
-        retrieval_result=store.search(query, top_k=1),
+        context=CONTEXT,
+        application_registration=APPLICATION,
+        retrieval_result=store.search(query, top_k=1, scope=CONTEXT.scope),
     )
     graph = build_langgraph(
         FailureDetector(Thresholds()),
@@ -111,6 +142,27 @@ def test_langgraph_deduplicates_and_promotes_improved_retrieval():
     assert len({chunk.text for chunk in result["retrieval_result"].documents}) == len(
         result["retrieval_result"].documents
     )
+
+
+def test_langgraph_does_not_execute_repair_without_application_registration():
+    class SpyRepairEngine:
+        called = False
+
+        def execute(self, *_args, **_kwargs):
+            self.called = True
+            raise AssertionError("repair must not run without an application scope")
+
+    engine = SpyRepairEngine()
+    graph, state = build_duplicate_graph(engine)
+    state.application_registration = None
+
+    result = graph.invoke(vars(state))
+
+    assert result["status"] == "escalated"
+    assert result["attempted_repairs"] == []
+    assert result["repair_result"] is None
+    assert result["repair_attempts"][0]["status"] == "failed"
+    assert engine.called is False
 
 
 class WorseRepairEngine:
@@ -232,7 +284,7 @@ def build_low_recall_graph(repair_engine):
         document_id="noise",
         text="general support contact information",
     )
-    store.add([relevant_one, relevant_two, noise])
+    add_scoped(store, [relevant_one, relevant_two, noise])
 
     query = "refund policy deadline"
     answer = "refund policy deadline information"
@@ -244,6 +296,8 @@ def build_low_recall_graph(repair_engine):
     )
     state = RAGGuardState(
         query=query,
+        context=CONTEXT,
+        application_registration=APPLICATION,
         retrieval_result=before_retrieval,
     )
 

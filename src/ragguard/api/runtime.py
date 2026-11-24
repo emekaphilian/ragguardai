@@ -329,7 +329,8 @@ class Workspace:
         query: str,
         top_k: int = 5,
         method: str = "hybrid",
-        context: TenantContext | None = None,
+        *,
+        context: TenantContext,
         record_run: bool = True,
     ) -> dict:
         self.refresh()
@@ -347,8 +348,8 @@ class Workspace:
         observation = RAGObservation(
             contract_version="v1",
             source=ObservationSource(
-                application_id=context.application_id if context else "ragguard",
-                environment=context.environment if context else "development",
+                application_id=context.application_id,
+                environment=context.environment,
             ),
             query=query,
             retrieved_chunks=[
@@ -374,14 +375,10 @@ class Workspace:
             observation,
             reliability_evaluation,
         )
-        registration = (
-            application_repository.get(
-                context.tenant_id,
-                context.application_id,
-                context.environment,
-            )
-            if context is not None
-            else None
+        registration = application_repository.get(
+            context.tenant_id,
+            context.application_id,
+            context.environment,
         )
         context_verification_authorized = bool(
             registration and registration.context_verification_authorized
@@ -469,9 +466,9 @@ class Workspace:
             "method": retrieval.retrieval_method.value, "latency_ms": latency_ms,
             "created_at": datetime.now(timezone.utc).isoformat(), "quality": quality,
             "capability_execution": capability_results,
-            "tenant_id": context.tenant_id if context else "development",
-            "application_id": context.application_id if context else "ragguard",
-            "environment": context.environment if context else "development",
+            "tenant_id": context.tenant_id,
+            "application_id": context.application_id,
+            "environment": context.environment,
         }
         if record_run:
             self.runs.insert(0, run)

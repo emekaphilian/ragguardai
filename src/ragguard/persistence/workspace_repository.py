@@ -89,14 +89,26 @@ class PostgreSQLWorkspaceRepository(WorkspaceRepository):
         return self.connection_factory() if self.connection_factory else connect(self.database_url)
 
     def list_documents(self, *, include_recycled=False):
-        sql = "SELECT document, recycled, source_relative_path FROM managed_documents"
+        sql = "SELECT document, recycled, source_relative_path, ragguard_tenant_id, application_id, environment, namespace FROM managed_documents"
         if not include_recycled:
             sql += " WHERE NOT recycled"
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(sql)
                 rows = cursor.fetchall()
-        return [(Document.model_validate(row[0]), row[1], row[2]) for row in rows]
+        documents = []
+        for document_json, recycled, source_path, tenant_id, application_id, environment, namespace in rows:
+            document = Document.model_validate(document_json)
+            document.metadata = {
+                **document.metadata,
+                "ragguard_tenant_id": tenant_id,
+                "application_id": application_id,
+                "environment": environment,
+                "tenant_namespace": namespace,
+                "identity_scope_explicit": True,
+            }
+            documents.append((document, recycled, source_path))
+        return documents
 
     def save_document(self, document, *, recycled=False, source_relative_path=None):
         self._save_documents([(document, recycled, source_relative_path)])

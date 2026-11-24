@@ -1,5 +1,3 @@
-from dataclasses import replace
-
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from ragguard.auth.application_access import resolve_application_context
@@ -22,7 +20,7 @@ def query(request: QueryRequest, context: TenantContext = Depends(tenant_context
         context, application_repository, application_id, environment
     )
 
-    if application is None:
+    if application is None or application_context is None:
         raise HTTPException(
             status_code=404,
             detail="Application is not registered for this RAGGuard tenant and environment.",

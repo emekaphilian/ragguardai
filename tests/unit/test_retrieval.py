@@ -7,5 +7,5 @@ def test_vector_retrieval():
         Chunk(chunk_id="a", document_id="d", text="refund within thirty days"),
         Chunk(chunk_id="b", document_id="d", text="security incident within twenty four hours"),
     ])
-    result = store.search("refund thirty days", 1)
+    result = store.search_privileged("refund thirty days", 1, namespace="development")
     assert result.documents[0].chunk_id == "a"

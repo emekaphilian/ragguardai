@@ -601,9 +601,19 @@ def observe(
             supported_repairs=remote_repairs,
         )
 
+    recovery_context = replace(
+        authenticated_service.tenant_context,
+        application_id=registration.application_id,
+        environment=registration.environment,
+        vector_namespace=(
+            registration.vector_namespace
+            or authenticated_service.tenant_context.vector_namespace
+        ),
+    )
     state = recovery_service.recover(
         observation=observation,
-        context=authenticated_service.tenant_context,
+        context=recovery_context,
+        application_registration=registration,
         evaluation=evaluation,
         failure_event=failure,
     )

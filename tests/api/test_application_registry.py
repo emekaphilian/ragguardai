@@ -359,7 +359,16 @@ def test_managed_context_faithfulness_requires_context_verification_capability(
             text="Refund policy: you may request a refund within 30 days.",
             metadata={"source": "refund-policy"},
         )],
-        context=tenant_context(),
+        context=TenantContext(
+            tenant_id="tenant-a",
+            application_id="managed-support",
+            environment="production",
+            user_id=None,
+            roles=(),
+            vector_namespace="default-index",
+            policy_version="v1",
+            index_version="v1",
+        ),
     )
     monkeypatch.setattr(retrieval_routes, "application_repository", repository)
     monkeypatch.setattr(retrieval_routes, "workspace", isolated_workspace)

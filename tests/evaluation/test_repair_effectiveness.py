@@ -1,5 +1,6 @@
 from ragguard.agents.graph import run_sequential
 from ragguard.agents.state import RAGGuardState
+from ragguard.auth.tenant_context import TenantContext
 from ragguard.common.enums import RepairType
 from ragguard.common.schemas import Chunk, RepairResult, ValidationResult
 from ragguard.config import Thresholds
@@ -8,6 +9,32 @@ from ragguard.diagnosis.diagnostic_agent import diagnose
 from ragguard.evaluation.evaluator import Evaluator
 from ragguard.repair.repair_engine import RepairEngine
 from ragguard.storage.vector_store import VectorStore
+from ragguard.tenants.application_registration import ApplicationRegistration
+
+
+CONTEXT = TenantContext(
+    "test-tenant", "test-app", "staging", None, (), "test-namespace", "v1", "v1"
+)
+APPLICATION = ApplicationRegistration(
+    ragguard_tenant_id=CONTEXT.tenant_id,
+    application_id=CONTEXT.application_id,
+    display_name="Test application",
+    environment=CONTEXT.environment,
+    knowledge_source="managed_index",
+    repair_authorized=True,
+    context_verification_authorized=True,
+    vector_namespace=CONTEXT.vector_namespace,
+)
+
+
+def add_scoped(store, chunks):
+    for chunk in chunks:
+        chunk.metadata.update({
+            "ragguard_tenant_id": CONTEXT.tenant_id,
+            "application_id": CONTEXT.application_id,
+            "environment": CONTEXT.environment,
+        })
+    store.add(chunks, namespace=CONTEXT.vector_namespace)
 
 
 def test_deduplicate_repair_improves_labeled_retrieval_state():
@@ -17,13 +44,17 @@ def test_deduplicate_repair_improves_labeled_retrieval_state():
         Chunk(chunk_id="duplicate-2", document_id="noise-2", text="Refund request general information."),
         Chunk(chunk_id="relevant", document_id="policy", text="Refunds are available within 30 days."),
     ]
-    store.add(chunks)
+    add_scoped(store, chunks)
     query = "refund request deadline"
     answer = "Refunds are available within 30 days."
-    retrieval = store.search(query, top_k=2)
+    retrieval = store.search(query, top_k=2, scope=CONTEXT.scope)
     evaluator = Evaluator()
     before = evaluator.evaluate(query, answer, retrieval, {"relevant"})
-    state = RAGGuardState(query=query, retrieval_result=retrieval, evaluation_result=before)
+    state = RAGGuardState(
+        query=query, context=CONTEXT, application_registration=APPLICATION,
+        retrieval_result=retrieval,
+        evaluation_result=before,
+    )
 
     state = run_sequential(
         state, FailureDetector(Thresholds()), diagnose, RepairEngine(), store,
@@ -57,11 +88,15 @@ class WorseRepairEngine:
 def test_failed_repair_rolls_back_retrieval_state():
     store = VectorStore()
     chunks = [Chunk(chunk_id="noise", document_id="noise", text="Refund request information.")]
-    store.add(chunks)
-    retrieval = store.search("refund deadline", top_k=1)
+    add_scoped(store, chunks)
+    retrieval = store.search("refund deadline", top_k=1, scope=CONTEXT.scope)
     evaluator = Evaluator()
     before = evaluator.evaluate("refund deadline", "Refund deadline.", retrieval, {"relevant"})
-    state = RAGGuardState(query="refund deadline", retrieval_result=retrieval, evaluation_result=before)
+    state = RAGGuardState(
+        query="refund deadline", context=CONTEXT,
+        application_registration=APPLICATION, retrieval_result=retrieval,
+        evaluation_result=before,
+    )
 
     state = run_sequential(
         state, FailureDetector(Thresholds()), diagnose, WorseRepairEngine(), store,

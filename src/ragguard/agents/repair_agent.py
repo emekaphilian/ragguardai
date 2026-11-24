@@ -1,4 +1,7 @@
 from ragguard.repair.repair_policy import choose_executable_repair
+from ragguard.auth.tenant_context import TenantContext
+from ragguard.auth.application_access import require_application_repair_authorization
+from ragguard.tenants.application_registration import ApplicationRegistration
 
 
 def plan_repair_node(state, available_repairs=None):
@@ -31,6 +34,17 @@ def repair_node(
         state.status = "escalated"
         return state
 
+    if not isinstance(state.context, TenantContext):
+        raise ValueError("Repair execution requires a complete tenant and application context.")
+    if not isinstance(
+        state.application_registration, ApplicationRegistration
+    ):
+        raise PermissionError("Repair requires an authorized application registration.")
+    require_application_repair_authorization(
+        state.context,
+        state.application_registration,
+    )
+
     state.attempted_repairs.append(repair)
 
     state.repair_result = engine.execute(
@@ -41,13 +55,10 @@ def repair_node(
         relevant_ids,
         evaluator,
         answer,
+        context=state.context,
+        application_registration=state.application_registration,
         before_retrieval=state.retrieval_result,
         top_k=len(state.retrieval_result.documents) or 5,
-        namespace=(
-            state.context.vector_namespace
-            if state.context
-            else None
-        ),
     )
     state.repair_result.failure_id = state.failure_event.failure_id
 

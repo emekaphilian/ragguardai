@@ -144,7 +144,9 @@ def repair(request: RepairRequest, context: TenantContext = Depends(tenant_conte
         )
     workspace.refresh()
     retrieval = workspace.store.search(
-        request.query, top_k=request.top_k, namespace=application_context.vector_namespace
+        request.query,
+        top_k=request.top_k,
+        scope=application_context.scope,
     )
     evaluator = Evaluator()
     relevant_ids = set(request.relevant_chunk_ids)
@@ -154,6 +156,7 @@ def repair(request: RepairRequest, context: TenantContext = Depends(tenant_conte
     state = RAGGuardState(
         query=request.query,
         context=application_context,
+        application_registration=application,
         retrieval_result=retrieval,
         evaluation_result=before_metrics,
     )

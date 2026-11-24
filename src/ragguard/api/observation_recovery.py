@@ -4,12 +4,14 @@ from ragguard.agents.state import RAGGuardState
 from ragguard.auth.tenant_context import TenantContext
 from ragguard.detection.live_failure import LiveFailureEvent
 from ragguard.evaluation.live import LiveEvaluation, RAGObservation
+from ragguard.tenants.application_registration import ApplicationRegistration
 
 
 def build_observation_state(
     *,
     observation: RAGObservation,
     context: TenantContext,
+    application_registration: ApplicationRegistration | None,
     retrieval_result,
     evaluation_result: LiveEvaluation,
     failure_event: LiveFailureEvent,
@@ -18,6 +20,7 @@ def build_observation_state(
     return RAGGuardState(
         query=observation.query,
         context=context,
+        application_registration=application_registration,
         observation=observation,
         retrieval_result=retrieval_result,
         evaluation_result=evaluation_result,

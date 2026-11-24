@@ -152,16 +152,19 @@ def local_recovery_service(
                 chunk_id="duplicate-1",
                 document_id="noise-1",
                 text="Refund request general information.",
+                metadata={"ragguard_tenant_id": "development", "application_id": "trustassist", "environment": "test"},
             ),
             Chunk(
                 chunk_id="duplicate-2",
                 document_id="noise-2",
                 text="Refund request general information.",
+                metadata={"ragguard_tenant_id": "development", "application_id": "trustassist", "environment": "test"},
             ),
             Chunk(
                 chunk_id="relevant",
                 document_id="policy",
                 text="Refunds are available within 30 days.",
+                metadata={"ragguard_tenant_id": "development", "application_id": "trustassist", "environment": "test"},
             ),
         ],
         namespace="development",
@@ -173,7 +176,7 @@ def local_recovery_service(
         return store.search(
             observation.query,
             top_k=len(store.chunks),
-            namespace=context.vector_namespace,
+            scope=context.scope,
         )
 
     return (

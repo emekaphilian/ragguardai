@@ -2,12 +2,14 @@ from dataclasses import dataclass, field
 
 from ragguard.auth.tenant_context import TenantContext
 from ragguard.observability.recovery_audit import RecoveryAuditRecord
+from ragguard.tenants.application_registration import ApplicationRegistration
 
 
 @dataclass
 class RAGGuardState:
     query: str
     context: TenantContext | None = None
+    application_registration: ApplicationRegistration | None = None
     observation: object | None = None
 
     retrieval_result: object | None = None

@@ -6,12 +6,14 @@ from ragguard.detection.live_detector import LiveFailureDetector
 from ragguard.evaluation.live import RAGObservation
 from ragguard.evaluation.live_evaluator import LiveEvaluator
 from ragguard.repair.repair_policy import EXECUTABLE_REPAIRS
+from ragguard.tenants.application_registration import ApplicationRegistration
 
 
 def run_replay(
     *,
     observation: RAGObservation,
     context: TenantContext,
+    application_registration: ApplicationRegistration | None = None,
     recovery_service,
 ) -> dict:
     """Re-evaluate a saved observation and run it through an isolated graph service."""
@@ -26,6 +28,7 @@ def run_replay(
     return recovery_service.recover(
         observation=observation,
         context=context,
+        application_registration=application_registration,
         evaluation=evaluation,
         failure_event=failure,
     )

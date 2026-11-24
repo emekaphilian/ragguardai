@@ -74,3 +74,39 @@ def require_application_role(context: TenantContext, application_id: str, enviro
     if tenant_roles & {"operator", "admin", "owner", "workspace_admin"}:
         return True
     return bool({role.lower() for role in application_roles(context, application_id, environment)} & allowed_roles)
+
+
+def require_application_repair_authorization(
+    context: TenantContext,
+    application: ApplicationRegistration | None,
+) -> None:
+    """Require a resolved, authorized managed application before repair."""
+    if not isinstance(context, TenantContext) or not isinstance(
+        application, ApplicationRegistration
+    ):
+        raise PermissionError(
+            "Repair requires an authorized application registration."
+        )
+
+    if (
+        not application.active
+        or application.ragguard_tenant_id != context.tenant_id
+        or application.application_id != context.application_id
+        or application.environment != context.environment
+        or application.vector_namespace != context.vector_namespace
+        or application.knowledge_source != "managed_index"
+        or not application.repair_authorized
+        or not application.context_verification_authorized
+    ):
+        raise PermissionError(
+            "The application has not authorized this repair operation."
+        )
+
+    allowed_roles = {"operator", "admin", "owner", "workspace_admin"}
+    if not require_application_role(
+        context,
+        application.application_id,
+        application.environment,
+        allowed_roles,
+    ):
+        raise PermissionError("Repair requires application operator authorization.")
